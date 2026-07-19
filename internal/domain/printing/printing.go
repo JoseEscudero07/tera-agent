@@ -1,8 +1,9 @@
-// Package printing defines the domain entities and ports for the printing
-// subsystem. Adapters (CUPS, Windows, ESC/POS, Zebra, PDF) implement these
-// interfaces in internal/adapters/printing. Owner ports: Software Architect;
-// implementations: Printing Engineer. This package knows nothing about
-// WebSocket, UI or ERP logic.
+// Package printing defines the domain of the print engine: entities, the
+// intermediate artifacts, and the ports (Renderer, Encoder, Driver, Rasterizer,
+// Binarizer, Resolver, ProfileProvider). It has no framework, transport or UI
+// dependencies (image is stdlib). Adapters implement these ports.
+//
+// See docs/PRINT_ENGINE.md and docs/BINARIZATION.md for the approved design.
 package printing
 
 import "context"
@@ -18,7 +19,7 @@ const (
 	StatusError   Status = "ERROR"
 )
 
-// Printer describes a discovered printer.
+// Printer is a discovered printer (result of Discovery).
 type Printer struct {
 	ID     string
 	Name   string
@@ -26,28 +27,14 @@ type Printer struct {
 	Status Status
 }
 
-// Document is a ready-to-print payload plus the target printer.
-type Document struct {
-	PrinterID string
-	Data      []byte // bytes already formatted for the target (ESC/POS, ZPL, PDF, ...)
-	// Raw sends the bytes to the device without driver/filter processing. Use it
-	// for ESC/POS and ZPL; leave false for PDF/text the driver should render.
-	Raw bool
-}
-
-// Request is the wire contract for a PRINT job payload dispatched by the
-// Backend. Data is base64-encoded automatically by encoding/json.
-type Request struct {
-	PrinterID string `json:"printer_id"`
-	Data      []byte `json:"data"`
-	Raw       bool   `json:"raw"`
-}
-
-// Port is the driven port the core uses to print. Each backend provides its
-// own implementation; they are interchangeable behind this interface.
-type Port interface {
-	// Print sends a document to a printer, honoring context cancellation.
-	Print(ctx context.Context, doc Document) error
+// PhysicalPrinter is what the Agent DETECTS and reports to the ERP. It carries
+// only physical facts, never business logic; the ERP owns the PrinterProfile.
+type PhysicalPrinter struct {
+	Name   string
+	Driver string
+	Port   string
+	Status Status
+	DPI    int
 }
 
 // Discovery enumerates printers and reports their status.

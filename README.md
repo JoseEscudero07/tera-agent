@@ -73,28 +73,47 @@ make test       # o: go test ./...
 make race       # go test -race ./...
 ```
 
-## Probar la impresión silenciosa (Linux/macOS)
+## Motor de impresión
 
-Requiere **CUPS** con al menos una impresora configurada. La impresión es
-silenciosa (sin diálogo) usando `lp`/`lpstat`.
+La impresión pasa por un **motor extensible por pipeline**
+(`PrintJob → Engine → Resolver → Renderer → Encoder → Driver`) que soporta
+distintos formatos de entrada e impresoras **sin tocar el Core**. El `Resolver`
+elige el pipeline por **capacidades** de la impresora (sin condicionales por
+formato). Diseño en [docs/PRINT_ENGINE.md](docs/PRINT_ENGINE.md); estrategia de
+binarización 1-bit en [docs/BINARIZATION.md](docs/BINARIZATION.md).
+
+**Imprimir un PDF de 80mm (FPDF) como ticket térmico** — el motor rasteriza el
+PDF (`pdftoppm`), lo binariza con **Otsu** al ancho nativo y lo envía como
+**ESC/POS raster** con corte:
 
 ```bash
-# 1) Listar impresoras y su estado
-./tera-agent printers
-
-# 2) Imprimir un archivo o texto por stdin (sustituye NOMBRE por tu impresora)
-echo "Ticket de prueba - Tera Agent" | ./tera-agent print -printer NOMBRE
-
-# 3) Impresión RAW para tickets ESC/POS o etiquetas ZPL (sin driver)
-./tera-agent print -printer NOMBRE -raw -file ticket.escpos
+# Requiere CUPS + poppler-utils (pdftoppm)
+./tera-agent print -printer XP-80 -file recibo.pdf            # PDF -> ESC/POS raster -> imprime
+./tera-agent print -printer XP-80 -file recibo.pdf -width 576 -cut
 ```
 
-`print` devuelve exit 0 y registra el `request id` de CUPS al encolar el trabajo.
-Si no tienes una impresora física, puedes crear una virtual PDF instalando
-`cups-pdf` (`sudo apt install printer-driver-cups-pdf`).
+**Dry-run (sin gastar papel):** vuelca los bytes ESC/POS a un archivo para
+inspeccionarlos:
 
-> Windows: la impresión silenciosa (Windows Print API) está pendiente; el
-> binario compila con un stub que reporta la plataforma como no soportada.
+```bash
+./tera-agent print -printer XP-80 -file recibo.pdf -out ticket.bin
+```
+
+Otros formatos y destinos (mismo comando, el Resolver elige el pipeline):
+
+```bash
+echo "Hola" | ./tera-agent print -printer XP-80 -format text   # texto -> ESC/POS
+./tera-agent print -printer OFICINA -file doc.pdf -device pdf   # PDF nativo (láser) sin rasterizar
+./tera-agent printers                                          # listar impresoras y estado
+```
+
+> **Genera el PDF a 80mm en tu backend** (FPDF): `new FPDF('P','mm', array(80,$alto))`.
+> Mandar un PDF “tal cual” a una cola térmica *raw* imprime código basura; el motor
+> lo resuelve rasterizando a ESC/POS según el perfil de la impresora.
+
+> Windows: el driver nativo (Windows Print API) está pendiente. En Windows los
+> comandos `lp`/`pdftoppm` no existen y el driver reporta error en tiempo de
+> ejecución (el binario compila igualmente).
 
 ## Ejecutar el agente
 
