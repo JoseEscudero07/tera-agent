@@ -34,7 +34,26 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1.0.0/).
 - Tests del Resolver (composición y pass-through), binarizers (Otsu/Threshold/
   Atkinson) y encoder ESC/POS.
 
+- **CLI multiplataforma** con comandos `printers`, `print`, `raw`, `text`, `run`.
+- **Windows**: driver e impresión RAW vía spooler (`winspool`) y enumeración con
+  `EnumPrinters`, sin depender del driver gráfico. Fachada `platform` que
+  selecciona CUPS (Linux/macOS) o spooler (Windows) por build tags.
+- ESC/POS: anchos **58mm/80mm**, corte, cajón y **densidad** configurable
+  (sesgo de umbral Otsu).
+- **config.yaml** (`gopkg.in/yaml.v3`) con `server`/`agent`/`printer`/`heartbeat`/`log`.
+- `Transport` + **LocalTransport**: modo local sin backend; seam listo para el
+  futuro `WebSocketTransport`.
+- Diseño del protocolo WebSocket (Fase 4) en `docs/protocol/`.
+- Manual de instalación (`docs/INSTALL.md`) y estado del MVP con pruebas y
+  problemas conocidos (`docs/MVP.md`).
+
 ### Changed
 - La impresión ya no usa un `Document`/`Port` plano: pasa por el motor. Los
   paquetes de `adapters/printing` se reorganizan en subpaquetes
   (rasterizer/renderer/encoder/binarizer/driver/discovery/profile).
+- Configuración migrada de JSON a **YAML** (`config.yaml`).
+
+### Fixed
+- `.gitignore` usaba el patrón `tera-agent` sin anclar, que ignoraba el
+  directorio `cmd/tera-agent/`: el entrypoint `main.go` no estaba versionado.
+  Patrones anclados a la raíz; `main.go` ahora en el repositorio.

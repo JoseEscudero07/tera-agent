@@ -73,6 +73,30 @@ make test       # o: go test ./...
 make race       # go test -race ./...
 ```
 
+## Instalación y ejecutables
+
+Ver el **[manual de instalación](docs/INSTALL.md)** (Linux y Windows) y el
+**[estado del MVP](docs/MVP.md)** (pruebas realizadas y problemas conocidos).
+
+Genera los ejecutables (`tera-agent-linux`, `tera-agent.exe`):
+
+```bash
+make cross     # -> dist/
+```
+
+## Comandos
+
+```bash
+tera-agent printers                                   # listar impresoras (nombre/sistema/estado/tipo)
+tera-agent print --printer XP-80 --file factura.pdf   # PDF/imagen/texto -> ESC/POS
+tera-agent raw   --printer XP-80 --file ticket.bin    # bytes sin modificar
+tera-agent text  --printer XP-80 --text "Hola mundo"  # texto -> ESC/POS
+tera-agent run   [--config config.yaml]               # agente residente (modo local)
+```
+
+Flags de impresión: `--paper 58|80`, `--width <dots>`, `--density 1..5`,
+`--cut`, `--drawer`, `--out FILE` (dry-run sin imprimir).
+
 ## Motor de impresión
 
 La impresión pasa por un **motor extensible por pipeline**
@@ -118,12 +142,15 @@ echo "Hola" | ./tera-agent print -printer XP-80 -format text   # texto -> ESC/PO
 ## Ejecutar el agente
 
 ```bash
-cp config.example.json config.json   # edita backend_url y token
-./tera-agent run -config config.json
+./tera-agent run                       # modo local (sin backend): imprime vía CLI
+# opcional, con configuración:
+cp config.example.yaml config.yaml     # edita server.url / printer.default
+./tera-agent run --config config.yaml
 ```
 
-> El transporte WebSocket es aún un stub; `run` avanzará por la máquina de
-> estados hasta `ERROR` al no poder conectar con un backend real.
+> Sin `server.url` el Agent corre en **modo local** (offline). El
+> `WebSocketTransport` para conectar con Django es la Fase 4 (protocolo diseñado
+> en [docs/protocol/](docs/protocol/README.md)).
 
 ## Equipo de agentes
 
