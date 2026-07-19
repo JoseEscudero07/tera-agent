@@ -1,0 +1,13 @@
+# Tera Agent — configuración. Copia a config.yaml y ajusta.
+# 'server.url' vacío = modo local (sin backend): impresión disponible por CLI.
+server:
+  url: ""            # wss://erp.example.com/ws/agent/  (futuro; vacío = local)
+  token: ""          # Token emitido por el Backend (no lo generes tú)
+agent:
+  id: ""             # identificador opcional de esta instalación
+printer:
+  default: "XP-80"   # impresora por defecto para los comandos
+heartbeat:
+  seconds: 30
+log:
+  level: "info"      # debug|info|warn|error

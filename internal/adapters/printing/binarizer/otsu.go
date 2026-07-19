@@ -8,19 +8,30 @@ import (
 
 // Otsu is the recommended default: an adaptive global threshold that maximizes
 // between-class variance. Crisp edges (good for text/QR/barcode), single pass,
-// negligible memory.
-type Otsu struct{}
+// negligible memory. Bias shifts the threshold to darken (+) or lighten (-) the
+// output, exposing a printer "density" knob.
+type Otsu struct{ Bias int }
 
-// NewOtsu returns the Otsu binarizer.
+// NewOtsu returns the Otsu binarizer with no bias.
 func NewOtsu() dp.Binarizer { return Otsu{} }
+
+// NewOtsuBias returns an Otsu binarizer with a threshold bias in [-128,128].
+// Positive = darker (more ink), negative = lighter.
+func NewOtsuBias(bias int) dp.Binarizer { return Otsu{Bias: bias} }
 
 func (Otsu) Name() string { return "otsu" }
 
-// Binarize thresholds at the Otsu level; pixels at or below the level are black.
-func (Otsu) Binarize(img image.Image) *dp.MonoBitmap {
+// Binarize thresholds at the (biased) Otsu level; pixels at or below are black.
+func (o Otsu) Binarize(img image.Image) *dp.MonoBitmap {
 	g := toGray(img)
-	t := otsuThreshold(g)
-	return pack(g, func(v uint8) bool { return v <= t })
+	t := int(otsuThreshold(g)) + o.Bias
+	if t < 0 {
+		t = 0
+	}
+	if t > 255 {
+		t = 255
+	}
+	return pack(g, func(v uint8) bool { return int(v) <= t })
 }
 
 // otsuThreshold computes the optimal global threshold from the histogram.

@@ -1,18 +1,19 @@
 // Package di is the composition root: the single place where concrete adapters
 // are constructed and wired to the core. Nothing else imports adapters, which
-// keeps the dependency direction pointing inward. Owner: Go Core Engineer;
-// wiring of new adapters is approved by the Software Architect.
+// keeps the dependency direction pointing inward. Owner: Go Core Engineer.
 package di
 
 import (
+	"os"
+
+	"github.com/teraerp/tera-agent/internal/adapters/communication/local"
 	"github.com/teraerp/tera-agent/internal/adapters/communication/websocket"
 	"github.com/teraerp/tera-agent/internal/adapters/config"
 	"github.com/teraerp/tera-agent/internal/adapters/logger"
 	"github.com/teraerp/tera-agent/internal/adapters/printing/binarizer"
-	"github.com/teraerp/tera-agent/internal/adapters/printing/discovery"
-	drivercups "github.com/teraerp/tera-agent/internal/adapters/printing/driver/cups"
 	driverfile "github.com/teraerp/tera-agent/internal/adapters/printing/driver/file"
 	"github.com/teraerp/tera-agent/internal/adapters/printing/encoder/escpos"
+	"github.com/teraerp/tera-agent/internal/adapters/printing/platform"
 	"github.com/teraerp/tera-agent/internal/adapters/printing/profile"
 	"github.com/teraerp/tera-agent/internal/adapters/printing/rasterizer/poppler"
 	"github.com/teraerp/tera-agent/internal/adapters/printing/renderer"
@@ -21,6 +22,7 @@ import (
 	"github.com/teraerp/tera-agent/internal/app/ports"
 	appprint "github.com/teraerp/tera-agent/internal/app/print"
 	"github.com/teraerp/tera-agent/internal/domain/agent"
+	"github.com/teraerp/tera-agent/internal/domain/comms"
 	"github.com/teraerp/tera-agent/internal/domain/job"
 	dp "github.com/teraerp/tera-agent/internal/domain/printing"
 )
@@ -30,49 +32,82 @@ type App struct {
 	Machine   *agent.Machine
 	Lifecycle *lifecycle.Lifecycle
 	Log       ports.Logger
-	// Profiles is populated by the communication layer when the Backend pushes
-	// printer profiles. Exposed so that layer (and tests) can seed it.
-	Profiles dp.ProfileCache
+	Transport comms.Transport
+	Profiles  dp.ProfileCache
+	// LocalMode is true when no backend URL is configured.
+	LocalMode bool
 }
 
-// Build reads configuration from configPath and wires the full object graph.
+// PrintOptions tune the print engine wiring for a command.
+type PrintOptions struct {
+	Density int    // 1..5 (3 = normal); 0 = normal
+	OutFile string // when set, encoded output is written here instead of printing
+}
+
+// Build reads configuration and wires the full object graph for `run`. A missing
+// config file is not an error: the Agent starts in local mode with defaults.
 func Build(configPath string) (*App, error) {
 	cfg, err := config.New(configPath).Load()
 	if err != nil {
-		return nil, err
+		if !os.IsNotExist(err) {
+			return nil, err
+		}
+		cfg = ports.Config{LogLevel: "info"}
 	}
 
 	log := logger.New(cfg.LogLevel)
 	machine := agent.NewMachine()
-	transport := websocket.New(cfg, log)
 
-	engine, profiles := newEngine(log, drivers(log))
+	local := cfg.BackendURL == ""
+	var transport comms.Transport
+	if local {
+		transport = localTransport(log)
+	} else {
+		transport = websocket.New(cfg, log)
+	}
+
+	engine, profiles := newEngine(log, platform.Drivers(log), 0)
 
 	disp := dispatcher.New(log)
 	disp.Register(job.KindPrint, appprint.NewJobHandler(engine))
 
 	lc := lifecycle.New(machine, transport, disp, cfg, log)
 
-	return &App{Machine: machine, Lifecycle: lc, Log: log, Profiles: profiles}, nil
+	return &App{
+		Machine:   machine,
+		Lifecycle: lc,
+		Log:       log,
+		Transport: transport,
+		Profiles:  profiles,
+		LocalMode: local,
+	}, nil
 }
 
-// BuildPrinting wires the print engine, its profile cache and printer discovery
-// without needing the agent configuration. Used by the CLI print/printers
-// subcommands. drivers default to CUPS raw + native.
-func BuildPrinting(log ports.Logger) (*appprint.Engine, dp.ProfileCache, dp.Discovery) {
-	engine, profiles := newEngine(log, drivers(log))
-	return engine, profiles, discovery.NewCUPS(log)
+// BuildPrinting wires the print engine, profile cache and discovery for the CLI
+// print/printers/raw/text commands (no backend needed).
+func BuildPrinting(log ports.Logger, opts PrintOptions) (*appprint.Engine, dp.ProfileCache, dp.Discovery) {
+	drivers := platform.Drivers(log)
+	if opts.OutFile != "" {
+		drivers = []dp.Driver{driverfile.New(opts.OutFile, log)}
+	}
+	engine, profiles := newEngine(log, drivers, densityBias(opts.Density))
+	return engine, profiles, platform.NewDiscovery(log)
 }
 
-// BuildPrintingToFile wires the print engine so the encoded output is written to
-// outPath instead of a printer (safe dry run, no paper used).
-func BuildPrintingToFile(log ports.Logger, outPath string) (*appprint.Engine, dp.ProfileCache) {
-	return newEngine(log, []dp.Driver{driverfile.New(outPath, log)})
-}
+// RawDriver returns the platform raw driver (for the `raw` command).
+func RawDriver(log ports.Logger) dp.Driver { return platform.RawDriver(log) }
+
+// OSName returns the running operating system name.
+func OSName() string { return platform.OSName() }
 
 // newEngine assembles renderers, encoders and the resolver over the given drivers.
-func newEngine(log ports.Logger, ds []dp.Driver) (*appprint.Engine, dp.ProfileCache) {
-	bin := binarizer.NewOtsu() // recommended default; see docs/BINARIZATION.md
+func newEngine(log ports.Logger, drivers []dp.Driver, bias int) (*appprint.Engine, dp.ProfileCache) {
+	var bin dp.Binarizer
+	if bias == 0 {
+		bin = binarizer.NewOtsu()
+	} else {
+		bin = binarizer.NewOtsuBias(bias)
+	}
 	raster := poppler.New(log)
 
 	renderers := []dp.Renderer{
@@ -86,13 +121,16 @@ func newEngine(log ports.Logger, ds []dp.Driver) (*appprint.Engine, dp.ProfileCa
 	}
 
 	profiles := profile.NewMemoryCache()
-	engine := appprint.NewEngine(appprint.NewResolver(renderers, encoders, ds), profiles, log)
+	engine := appprint.NewEngine(appprint.NewResolver(renderers, encoders, drivers), profiles, log)
 	return engine, profiles
 }
 
-func drivers(log ports.Logger) []dp.Driver {
-	return []dp.Driver{
-		drivercups.NewRaw(log),
-		drivercups.NewNative(log),
+// densityBias maps a 1..5 density level to an Otsu threshold bias.
+func densityBias(density int) int {
+	if density == 0 {
+		return 0
 	}
+	return (density - 3) * 20
 }
+
+func localTransport(log ports.Logger) comms.Transport { return local.New(log) }

@@ -1,34 +1,41 @@
-// Package config provides a file-based ports.ConfigStore backed by JSON.
+// Package config provides a YAML-backed ports.ConfigStore.
 // Owner: Go Core Engineer. Secure storage of the Token is reviewed by the
 // Security Engineer (never log it, never place it in URLs).
 package config
 
 import (
-	"encoding/json"
-	"errors"
 	"os"
 	"time"
+
+	"gopkg.in/yaml.v3"
 
 	"github.com/teraerp/tera-agent/internal/app/ports"
 )
 
-// fileStore reads/writes the configuration as JSON at Path.
-type fileStore struct {
-	Path string
-}
+// fileStore reads/writes the configuration as YAML at Path.
+type fileStore struct{ Path string }
 
-// New returns a ConfigStore backed by the JSON file at path.
-func New(path string) ports.ConfigStore {
-	return &fileStore{Path: path}
-}
+// New returns a ConfigStore backed by the YAML file at path.
+func New(path string) ports.ConfigStore { return &fileStore{Path: path} }
 
-// wire is the on-disk representation. HeartbeatInterval is stored in seconds
-// for human readability.
+// wire is the on-disk YAML representation.
 type wire struct {
-	BackendURL       string `json:"backend_url"`
-	Token            string `json:"token"`
-	HeartbeatSeconds int    `json:"heartbeat_seconds"`
-	LogLevel         string `json:"log_level"`
+	Server struct {
+		URL   string `yaml:"url"`
+		Token string `yaml:"token"`
+	} `yaml:"server"`
+	Agent struct {
+		ID string `yaml:"id"`
+	} `yaml:"agent"`
+	Printer struct {
+		Default string `yaml:"default"`
+	} `yaml:"printer"`
+	Heartbeat struct {
+		Seconds int `yaml:"seconds"`
+	} `yaml:"heartbeat"`
+	Log struct {
+		Level string `yaml:"level"`
+	} `yaml:"log"`
 }
 
 func (f *fileStore) Load() (ports.Config, error) {
@@ -37,28 +44,33 @@ func (f *fileStore) Load() (ports.Config, error) {
 		return ports.Config{}, err
 	}
 	var w wire
-	if err := json.Unmarshal(b, &w); err != nil {
+	if err := yaml.Unmarshal(b, &w); err != nil {
 		return ports.Config{}, err
 	}
-	if w.BackendURL == "" {
-		return ports.Config{}, errors.New("config: backend_url is required")
+	level := w.Log.Level
+	if level == "" {
+		level = "info"
 	}
 	return ports.Config{
-		BackendURL:        w.BackendURL,
-		Token:             w.Token,
-		HeartbeatInterval: time.Duration(w.HeartbeatSeconds) * time.Second,
-		LogLevel:          w.LogLevel,
+		BackendURL:        w.Server.URL,
+		Token:             w.Server.Token,
+		AgentID:           w.Agent.ID,
+		DefaultPrinter:    w.Printer.Default,
+		HeartbeatInterval: time.Duration(w.Heartbeat.Seconds) * time.Second,
+		LogLevel:          level,
 	}, nil
 }
 
 func (f *fileStore) Save(c ports.Config) error {
-	w := wire{
-		BackendURL:       c.BackendURL,
-		Token:            c.Token,
-		HeartbeatSeconds: int(c.HeartbeatInterval / time.Second),
-		LogLevel:         c.LogLevel,
-	}
-	b, err := json.MarshalIndent(w, "", "  ")
+	var w wire
+	w.Server.URL = c.BackendURL
+	w.Server.Token = c.Token
+	w.Agent.ID = c.AgentID
+	w.Printer.Default = c.DefaultPrinter
+	w.Heartbeat.Seconds = int(c.HeartbeatInterval / time.Second)
+	w.Log.Level = c.LogLevel
+
+	b, err := yaml.Marshal(&w)
 	if err != nil {
 		return err
 	}

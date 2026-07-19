@@ -1,3 +1,5 @@
+//go:build linux || darwin
+
 // Package discovery enumerates printers and reports physical status via CUPS
 // (lpstat). Output is forced to the C locale so parsing is language-independent.
 // Owner: Printing Engineer.

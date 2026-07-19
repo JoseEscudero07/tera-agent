@@ -1,3 +1,5 @@
+//go:build linux || darwin
+
 // Package cups is the CUPS driver: it only sends bytes to a printer via `lp`.
 // It never renders or converts. Raw mode (`-o raw`) is used for device
 // languages (ESC/POS, ZPL); native mode lets CUPS filters render PDF/PNG.

@@ -1,11 +1,13 @@
-# Binaries
+# Binaries (anchored to repo root so cmd/tera-agent/ source is NOT ignored)
 /bin/
 /dist/
-tera-agent
-tera-agent.exe
+/tera-agent
+/tera-agent-linux
+/tera-agent.exe
 
 # Local config with secrets (Token). Never commit.
 config.json
+config.yaml
 
 # Go
 *.test
