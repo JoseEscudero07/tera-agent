@@ -26,11 +26,24 @@ var (
 	procEndDocPrinter    = winspool.NewProc("EndDocPrinter")
 	procClosePrinter     = winspool.NewProc("ClosePrinter")
 	procEnumPrinters     = winspool.NewProc("EnumPrintersW")
+	procGetPrinter       = winspool.NewProc("GetPrinterW")
 )
 
 const (
 	printerEnumLocal       = 0x00000002
 	printerEnumConnections = 0x00000004
+)
+
+// PRINTER_STATUS_* bit flags (subset) used to map to a domain Status.
+const (
+	statusError        = 0x00000002
+	statusPaperJam     = 0x00000008
+	statusPaperOut     = 0x00000010
+	statusOffline      = 0x00000080
+	statusBusy         = 0x00000200
+	statusPrinting     = 0x00000400
+	statusNotAvailable = 0x00001000
+	statusProcessing   = 0x00004000
 )
 
 // docInfo1 mirrors DOC_INFO_1W.
@@ -139,16 +152,53 @@ func (d *Discovery) List(_ context.Context) ([]dp.Printer, error) {
 	for i := uint32(0); i < returned; i++ {
 		pi := (*printerInfo4)(unsafe.Pointer(&buf[int(uintptr(i)*stride)]))
 		name := utf16PtrToString(pi.pPrinterName)
+		status, _ := d.StatusOf(context.Background(), name)
 		printers = append(printers, dp.Printer{
-			ID: name, Name: name, Driver: "winspool", Status: dp.StatusUnknown,
+			ID: name, Name: name, Driver: "winspool", Status: status,
 		})
 	}
 	return printers, nil
 }
 
-// StatusOf is best-effort on Windows in the MVP (status not queried yet).
-func (d *Discovery) StatusOf(_ context.Context, _ string) (dp.Status, error) {
-	return dp.StatusUnknown, nil
+// StatusOf queries PRINTER_INFO_6 (a single status DWORD) via GetPrinter.
+func (d *Discovery) StatusOf(_ context.Context, printerID string) (dp.Status, error) {
+	name, err := syscall.UTF16PtrFromString(printerID)
+	if err != nil {
+		return dp.StatusUnknown, nil
+	}
+	var h syscall.Handle
+	if r, _, _ := procOpenPrinter.Call(uintptr(unsafe.Pointer(name)), uintptr(unsafe.Pointer(&h)), 0); r == 0 {
+		return dp.StatusUnknown, nil
+	}
+	defer procClosePrinter.Call(uintptr(h))
+
+	var needed uint32
+	// PRINTER_INFO_6 is a single DWORD (dwStatus); size the buffer first.
+	procGetPrinter.Call(uintptr(h), 6, 0, 0, uintptr(unsafe.Pointer(&needed)))
+	if needed < 4 {
+		return dp.StatusUnknown, nil
+	}
+	buf := make([]byte, needed)
+	if r, _, _ := procGetPrinter.Call(uintptr(h), 6,
+		uintptr(unsafe.Pointer(&buf[0])), uintptr(needed), uintptr(unsafe.Pointer(&needed))); r == 0 {
+		return dp.StatusUnknown, nil
+	}
+	return mapStatus(*(*uint32)(unsafe.Pointer(&buf[0]))), nil
+}
+
+func mapStatus(s uint32) dp.Status {
+	switch {
+	case s == 0:
+		return dp.StatusReady
+	case s&(statusOffline|statusNotAvailable) != 0:
+		return dp.StatusOffline
+	case s&(statusError|statusPaperJam|statusPaperOut) != 0:
+		return dp.StatusError
+	case s&(statusPrinting|statusBusy|statusProcessing) != 0:
+		return dp.StatusBusy
+	default:
+		return dp.StatusReady
+	}
 }
 
 func utf16PtrToString(p *uint16) string {
