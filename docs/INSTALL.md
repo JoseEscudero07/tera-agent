@@ -90,5 +90,47 @@ impresión.
 ./tera-agent-linux run                # modo local; imprime vía CLI; sin backend
 ```
 
-En Windows puede registrarse como tarea/servicio (pendiente el instalador —
-ver [MVP.md](MVP.md), problemas conocidos).
+## 7. Servicio de Windows
+
+Con `tera-agent.exe` y los scripts de `scripts/` en una carpeta, en **PowerShell
+como Administrador**:
+
+```powershell
+.\windows-install.ps1                  # copia a Program Files, crea y arranca el servicio
+```
+
+Esto instala el servicio **TeraAgent** (arranque automático), con la config en
+`C:\ProgramData\TeraAgent\config.yaml`. Gestión manual:
+
+```powershell
+tera-agent.exe service install|uninstall|start|stop --config <ruta>
+# o desinstalar todo:
+.\windows-uninstall.ps1
+```
+
+## 8. Solución de problemas
+
+### Linux: la impresora imprime PostScript / instala driver equivocado (p. ej. Digital POS KL200)
+
+Las térmicas ESC/POS (KL200, XP-80, …) **no** deben usar un driver PostScript/GDI:
+CUPS convertiría el trabajo a PostScript y la impresora escupe código. La solución
+es una **cola RAW** (sin driver). Tera Agent ya envía con `-o raw`, pero conviene
+que la cola sea raw:
+
+```bash
+# 1) Encuentra la URI del dispositivo (USB/red)
+lpinfo -v
+#    ejemplo: usb://Digital-POS/KL200?serial=...
+
+# 2) Borra la cola mal configurada (si existe) y crea una RAW
+sudo lpadmin -x KL200 2>/dev/null
+sudo lpadmin -p KL200 -E -v 'usb://Digital-POS/KL200?serial=...' -m raw
+
+# 3) Marca como lista y prueba (dry-run, no imprime)
+tera-agent print --printer KL200 --file recibo.pdf --out /tmp/ticket.bin
+```
+
+Si tu versión de CUPS no acepta `-m raw`, crea la cola **sin PPD** (queda raw) o
+usa la interfaz web `http://localhost:631` → *Add Printer* → modelo **"Raw"**.
+
+> El KL200 es 80mm → usa `--paper 80` (576 dots), el valor por defecto.

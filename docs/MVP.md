@@ -68,8 +68,10 @@ Verificado con Go 1.23.5 (build + `go test -race`):
    reescala al ancho del papel (usa el tamaño original). El PDF sí se escala al
    ancho nativo. Reescalado de imágenes: pendiente.
 5. **`run` es headless**: sin icono de bandeja (tray) todavía; eso pertenece a la
-   fase de UI. El binario corre como proceso residente.
-6. **Sin instalador/servicio** de Windows aún (fase DevOps).
+   fase de UI. El binario corre como proceso residente / servicio.
+6. **Servicio de Windows**: implementado (`service install|uninstall|start|stop`
+   con `x/sys/windows/svc`) + instalador `scripts/windows-install.ps1`; **pendiente
+   de probar en Windows real**. En Linux/macOS no hay servicio (usar systemd/launchd).
 7. **Backend**: `WebSocketTransport` no implementado; `run` con `server.url` usa
    un stub que termina en `ERROR`. El protocolo está diseñado en
    [protocol/](protocol/README.md) para la implementación de Fase 4.

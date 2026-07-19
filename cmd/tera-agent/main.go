@@ -45,6 +45,8 @@ func main() {
 		exitOn(cmdText(args[1:]))
 	case "run":
 		cmdRun(args[1:])
+	case "service":
+		exitOn(cmdService(args[1:]))
 	case "help", "-h", "--help":
 		usage()
 	default:
@@ -169,6 +171,7 @@ func cmdRaw(args []string) error {
 }
 
 // cmdRun starts the resident agent (local mode until a backend is configured).
+// When launched by the Windows Service Control Manager it runs as a service.
 func cmdRun(args []string) {
 	fs := flag.NewFlagSet("run", flag.ExitOnError)
 	configPath := fs.String("config", "config.yaml", "path to the configuration file")
@@ -183,24 +186,49 @@ func cmdRun(args []string) {
 		app.Log.Info("state changed", "from", string(from), "to", string(to))
 	})
 
+	// Windows service: the SCM controls the lifetime.
+	if isWindowsService() {
+		ctx, cancel := context.WithCancel(context.Background())
+		if err := runWindowsService(func() { runLoop(ctx, app) }, cancel); err != nil {
+			app.Log.Error("service", "err", err)
+			os.Exit(1)
+		}
+		return
+	}
+
+	// Interactive: Ctrl-C / SIGTERM stop the agent.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	runLoop(ctx, app)
+}
 
+// runLoop runs the agent until ctx is cancelled.
+func runLoop(ctx context.Context, app *di.App) {
 	if app.LocalMode {
 		if err := app.Transport.Connect(ctx); err != nil {
 			app.Log.Error("transport", "err", err)
-			os.Exit(1)
+			return
 		}
 		app.Log.Info("tera-agent running (local mode). Printing available via CLI; backend integration pending.")
 		<-ctx.Done()
 		_ = app.Transport.Close()
 		return
 	}
-
 	if err := app.Lifecycle.Run(ctx); err != nil {
 		app.Log.Error("agent stopped", "err", err)
-		os.Exit(1)
 	}
+}
+
+// cmdService manages the Windows service (install|uninstall|start|stop).
+func cmdService(args []string) error {
+	if len(args) == 0 {
+		return fmt.Errorf("service: expected install|uninstall|start|stop")
+	}
+	action := args[0]
+	fs := flag.NewFlagSet("service", flag.ExitOnError)
+	configPath := fs.String("config", `C:\ProgramData\TeraAgent\config.yaml`, "config path for the service")
+	_ = fs.Parse(args[1:])
+	return controlService(action, *configPath)
 }
 
 // engineArgs bundles the parameters for a print through the engine.
@@ -296,6 +324,7 @@ Commands:
   raw    --printer NAME --file F             Send bytes unmodified
   text   --printer NAME --text "..."         Print text as ESC/POS
   run    [--config config.yaml]              Run as a resident agent (local mode)
+  service install|uninstall|start|stop       Manage the Windows service
 
 Common print flags:
   --paper 58|80     Thermal width in mm (default 80)
