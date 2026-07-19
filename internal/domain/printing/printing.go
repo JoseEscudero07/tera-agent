@@ -29,7 +29,18 @@ type Printer struct {
 // Document is a ready-to-print payload plus the target printer.
 type Document struct {
 	PrinterID string
-	Data      []byte // raw bytes already formatted for the target (ESC/POS, ZPL, PDF, ...)
+	Data      []byte // bytes already formatted for the target (ESC/POS, ZPL, PDF, ...)
+	// Raw sends the bytes to the device without driver/filter processing. Use it
+	// for ESC/POS and ZPL; leave false for PDF/text the driver should render.
+	Raw bool
+}
+
+// Request is the wire contract for a PRINT job payload dispatched by the
+// Backend. Data is base64-encoded automatically by encoding/json.
+type Request struct {
+	PrinterID string `json:"printer_id"`
+	Data      []byte `json:"data"`
+	Raw       bool   `json:"raw"`
 }
 
 // Port is the driven port the core uses to print. Each backend provides its

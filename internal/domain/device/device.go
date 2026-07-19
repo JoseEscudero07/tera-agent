@@ -11,13 +11,13 @@ import "context"
 type Kind string
 
 const (
-	KindScanner      Kind = "BARCODE_SCANNER"
-	KindCashDrawer   Kind = "CASH_DRAWER"
-	KindScale        Kind = "SCALE"
-	KindDisplay      Kind = "CUSTOMER_DISPLAY"
-	KindSerial       Kind = "SERIAL"
-	KindUSBHID       Kind = "USB_HID"
-	KindRFID         Kind = "RFID"
+	KindScanner    Kind = "BARCODE_SCANNER"
+	KindCashDrawer Kind = "CASH_DRAWER"
+	KindScale      Kind = "SCALE"
+	KindDisplay    Kind = "CUSTOMER_DISPLAY"
+	KindSerial     Kind = "SERIAL"
+	KindUSBHID     Kind = "USB_HID"
+	KindRFID       Kind = "RFID"
 )
 
 // Device describes a connected peripheral.

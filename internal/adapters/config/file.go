@@ -25,10 +25,10 @@ func New(path string) ports.ConfigStore {
 // wire is the on-disk representation. HeartbeatInterval is stored in seconds
 // for human readability.
 type wire struct {
-	BackendURL          string `json:"backend_url"`
-	Token               string `json:"token"`
-	HeartbeatSeconds    int    `json:"heartbeat_seconds"`
-	LogLevel            string `json:"log_level"`
+	BackendURL       string `json:"backend_url"`
+	Token            string `json:"token"`
+	HeartbeatSeconds int    `json:"heartbeat_seconds"`
+	LogLevel         string `json:"log_level"`
 }
 
 func (f *fileStore) Load() (ports.Config, error) {

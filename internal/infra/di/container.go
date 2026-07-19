@@ -8,10 +8,12 @@ import (
 	"github.com/teraerp/tera-agent/internal/adapters/communication/websocket"
 	"github.com/teraerp/tera-agent/internal/adapters/config"
 	"github.com/teraerp/tera-agent/internal/adapters/logger"
+	"github.com/teraerp/tera-agent/internal/adapters/printing"
 	"github.com/teraerp/tera-agent/internal/app/dispatcher"
 	"github.com/teraerp/tera-agent/internal/app/lifecycle"
 	"github.com/teraerp/tera-agent/internal/app/ports"
 	"github.com/teraerp/tera-agent/internal/domain/agent"
+	"github.com/teraerp/tera-agent/internal/domain/job"
 )
 
 // App bundles the wired components main needs to run and observe the Agent.
@@ -34,8 +36,10 @@ func Build(configPath string) (*App, error) {
 	transport := websocket.New(cfg, log)
 	disp := dispatcher.New(log)
 
-	// Feature handlers are registered here once implemented and approved, e.g.:
-	//   disp.Register(job.KindPrint, printing.NewHandler(...))
+	// Printing: wire the platform Port and register the PRINT job handler.
+	printPort, _ := printing.New(log)
+	disp.Register(job.KindPrint, printing.NewHandler(printPort, log))
+	// Device handlers are registered here once implemented and approved:
 	//   disp.Register(job.KindDevice, device.NewHandler(...))
 
 	lc := lifecycle.New(machine, transport, disp, cfg, log)

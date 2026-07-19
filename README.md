@@ -51,16 +51,60 @@ el **Token** emitido por el Backend; nunca lo genera, renueva, ni conoce
 usuarios o credenciales. Tras un Token válido, el Backend responde con UUID,
 Empresa, Sucursal, Equipo, intervalo de Heartbeat y configuración inicial.
 
-## Uso (desarrollo)
+## Instalación de Go
 
-Requiere **Go 1.23+** (no instalado en este entorno de scaffold).
+Requiere **Go 1.23+**.
+
+```bash
+# Linux (amd64) — ejemplo
+curl -sSL -o go.tgz https://go.dev/dl/go1.23.5.linux-amd64.tar.gz
+sudo rm -rf /usr/local/go && sudo tar -C /usr/local -xzf go.tgz
+export PATH=$PATH:/usr/local/go/bin        # añádelo a tu ~/.bashrc
+go version
+```
+
+(macOS/Windows: instaladores en <https://go.dev/dl/>.)
+
+## Compilar y probar
+
+```bash
+make build      # o: go build ./...
+make test       # o: go test ./...
+make race       # go test -race ./...
+```
+
+## Probar la impresión silenciosa (Linux/macOS)
+
+Requiere **CUPS** con al menos una impresora configurada. La impresión es
+silenciosa (sin diálogo) usando `lp`/`lpstat`.
+
+```bash
+# 1) Listar impresoras y su estado
+./tera-agent printers
+
+# 2) Imprimir un archivo o texto por stdin (sustituye NOMBRE por tu impresora)
+echo "Ticket de prueba - Tera Agent" | ./tera-agent print -printer NOMBRE
+
+# 3) Impresión RAW para tickets ESC/POS o etiquetas ZPL (sin driver)
+./tera-agent print -printer NOMBRE -raw -file ticket.escpos
+```
+
+`print` devuelve exit 0 y registra el `request id` de CUPS al encolar el trabajo.
+Si no tienes una impresora física, puedes crear una virtual PDF instalando
+`cups-pdf` (`sudo apt install printer-driver-cups-pdf`).
+
+> Windows: la impresión silenciosa (Windows Print API) está pendiente; el
+> binario compila con un stub que reporta la plataforma como no soportada.
+
+## Ejecutar el agente
 
 ```bash
 cp config.example.json config.json   # edita backend_url y token
-go build ./...
-go test ./...
-go run ./cmd/tera-agent --config config.json
+./tera-agent run -config config.json
 ```
+
+> El transporte WebSocket es aún un stub; `run` avanzará por la máquina de
+> estados hasta `ERROR` al no poder conectar con un backend real.
 
 ## Equipo de agentes
 

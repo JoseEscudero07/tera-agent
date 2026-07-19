@@ -14,16 +14,16 @@ import (
 type State string
 
 const (
-	StateStarting      State = "STARTING"
-	StateConnecting    State = "CONNECTING"
+	StateStarting       State = "STARTING"
+	StateConnecting     State = "CONNECTING"
 	StateAuthenticating State = "AUTHENTICATING"
-	StateRegistering   State = "REGISTERING"
-	StateConnected     State = "CONNECTED"
-	StateDisconnected  State = "DISCONNECTED"
-	StateReconnecting  State = "RECONNECTING"
-	StateOffline       State = "OFFLINE"
-	StateError         State = "ERROR"
-	StateShuttingDown  State = "SHUTTING_DOWN"
+	StateRegistering    State = "REGISTERING"
+	StateConnected      State = "CONNECTED"
+	StateDisconnected   State = "DISCONNECTED"
+	StateReconnecting   State = "RECONNECTING"
+	StateOffline        State = "OFFLINE"
+	StateError          State = "ERROR"
+	StateShuttingDown   State = "SHUTTING_DOWN"
 )
 
 // transitions declares, for each state, the set of states it may move to.

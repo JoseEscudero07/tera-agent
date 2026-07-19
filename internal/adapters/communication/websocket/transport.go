@@ -20,9 +20,9 @@ var ErrNotImplemented = errors.New("websocket transport: not implemented yet")
 
 // Transport is the stub WebSocket transport.
 type Transport struct {
-	cfg    ports.Config
-	log    ports.Logger
-	inbox  chan comms.Envelope
+	cfg   ports.Config
+	log   ports.Logger
+	inbox chan comms.Envelope
 }
 
 // New returns a stub Transport. The real one dials cfg.BackendURL over TLS.
