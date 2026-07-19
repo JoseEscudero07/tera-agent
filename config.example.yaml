@@ -9,5 +9,8 @@ printer:
   default: "XP-80"   # impresora por defecto para los comandos
 heartbeat:
   seconds: 30
+http:
+  addr: "127.0.0.1:9100"   # web service local para que Django mande PDFs; "" lo desactiva
+  token: ""                # si lo pones, exige 'Authorization: Bearer <token>'
 log:
   level: "info"      # debug|info|warn|error

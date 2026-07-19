@@ -21,6 +21,11 @@ type Config struct {
 	HeartbeatInterval time.Duration
 	// LogLevel: debug|info|warn|error.
 	LogLevel string
+	// HTTPAddr, when set, makes `run` also expose the local HTTP print service
+	// (e.g. "127.0.0.1:9100"). Empty disables it.
+	HTTPAddr string
+	// HTTPToken, when set, requires "Authorization: Bearer <token>" on the HTTP API.
+	HTTPToken string
 }
 
 // ConfigStore loads and persists the Agent configuration. The file-based

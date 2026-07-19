@@ -22,6 +22,7 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/teraerp/tera-agent/internal/adapters/api/httpapi"
 	"github.com/teraerp/tera-agent/internal/adapters/logger"
 	"github.com/teraerp/tera-agent/internal/domain/agent"
 	dp "github.com/teraerp/tera-agent/internal/domain/printing"
@@ -45,6 +46,8 @@ func main() {
 		exitOn(cmdText(args[1:]))
 	case "run":
 		cmdRun(args[1:])
+	case "serve":
+		cmdServe(args[1:])
 	case "service":
 		exitOn(cmdService(args[1:]))
 	case "help", "-h", "--help":
@@ -209,13 +212,43 @@ func runLoop(ctx context.Context, app *di.App) {
 			app.Log.Error("transport", "err", err)
 			return
 		}
+		defer app.Transport.Close()
+
+		if app.HTTPAddr != "" {
+			app.Log.Info("tera-agent running (local mode) with HTTP print service")
+			srv := httpapi.New(app.Engine, app.Profiles, app.Discovery, app.Log, app.HTTPToken)
+			if err := srv.Run(ctx, app.HTTPAddr); err != nil {
+				app.Log.Error("http service", "err", err)
+			}
+			return
+		}
 		app.Log.Info("tera-agent running (local mode). Printing available via CLI; backend integration pending.")
 		<-ctx.Done()
-		_ = app.Transport.Close()
 		return
 	}
 	if err := app.Lifecycle.Run(ctx); err != nil {
 		app.Log.Error("agent stopped", "err", err)
+	}
+}
+
+// cmdServe starts only the local HTTP print service (Django integration/testing).
+func cmdServe(args []string) {
+	fs := flag.NewFlagSet("serve", flag.ExitOnError)
+	addr := fs.String("addr", "127.0.0.1:9100", "listen address (use 0.0.0.0:9100 for LAN)")
+	token := fs.String("token", "", "require 'Authorization: Bearer <token>' when set")
+	density := fs.Int("density", 3, "print density 1..5")
+	level := fs.String("log", "info", "log level")
+	_ = fs.Parse(args)
+
+	log := logger.New(*level)
+	engine, profiles, disc := di.BuildPrinting(log, di.PrintOptions{Density: *density})
+	srv := httpapi.New(engine, profiles, disc, log, *token)
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	if err := srv.Run(ctx, *addr); err != nil {
+		log.Error("http service", "err", err)
+		os.Exit(1)
 	}
 }
 
@@ -324,6 +357,7 @@ Commands:
   raw    --printer NAME --file F             Send bytes unmodified
   text   --printer NAME --text "..."         Print text as ESC/POS
   run    [--config config.yaml]              Run as a resident agent (local mode)
+  serve  [--addr 127.0.0.1:9100] [--token X] Start the HTTP print web service
   service install|uninstall|start|stop       Manage the Windows service
 
 Common print flags:

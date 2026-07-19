@@ -34,8 +34,13 @@ type App struct {
 	Log       ports.Logger
 	Transport comms.Transport
 	Profiles  dp.ProfileCache
+	Engine    *appprint.Engine
+	Discovery dp.Discovery
 	// LocalMode is true when no backend URL is configured.
 	LocalMode bool
+	// HTTPAddr/HTTPToken configure the optional local HTTP print service.
+	HTTPAddr  string
+	HTTPToken string
 }
 
 // PrintOptions tune the print engine wiring for a command.
@@ -79,7 +84,11 @@ func Build(configPath string) (*App, error) {
 		Log:       log,
 		Transport: transport,
 		Profiles:  profiles,
+		Engine:    engine,
+		Discovery: platform.NewDiscovery(log),
 		LocalMode: local,
+		HTTPAddr:  cfg.HTTPAddr,
+		HTTPToken: cfg.HTTPToken,
 	}, nil
 }
 

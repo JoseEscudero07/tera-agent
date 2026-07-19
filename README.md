@@ -92,10 +92,14 @@ tera-agent print --printer XP-80 --file factura.pdf   # PDF/imagen/texto -> ESC/
 tera-agent raw   --printer XP-80 --file ticket.bin    # bytes sin modificar
 tera-agent text  --printer XP-80 --text "Hola mundo"  # texto -> ESC/POS
 tera-agent run   [--config config.yaml]               # agente residente (modo local)
+tera-agent serve [--addr 127.0.0.1:9100]              # web service HTTP (Django manda PDFs)
 ```
 
 Flags de impresión: `--paper 58|80`, `--width <dots>`, `--density 1..5`,
 `--cut`, `--drawer`, `--out FILE` (dry-run sin imprimir).
+
+**Integración con Django** vía HTTP: ver [docs/HTTP_API.md](docs/HTTP_API.md) —
+`POST /print` con el PDF y el agente lo rasteriza a ESC/POS 80mm e imprime.
 
 ## Motor de impresión
 

@@ -33,6 +33,10 @@ type wire struct {
 	Heartbeat struct {
 		Seconds int `yaml:"seconds"`
 	} `yaml:"heartbeat"`
+	HTTP struct {
+		Addr  string `yaml:"addr"`
+		Token string `yaml:"token"`
+	} `yaml:"http"`
 	Log struct {
 		Level string `yaml:"level"`
 	} `yaml:"log"`
@@ -58,6 +62,8 @@ func (f *fileStore) Load() (ports.Config, error) {
 		DefaultPrinter:    w.Printer.Default,
 		HeartbeatInterval: time.Duration(w.Heartbeat.Seconds) * time.Second,
 		LogLevel:          level,
+		HTTPAddr:          w.HTTP.Addr,
+		HTTPToken:         w.HTTP.Token,
 	}, nil
 }
 
@@ -68,6 +74,8 @@ func (f *fileStore) Save(c ports.Config) error {
 	w.Agent.ID = c.AgentID
 	w.Printer.Default = c.DefaultPrinter
 	w.Heartbeat.Seconds = int(c.HeartbeatInterval / time.Second)
+	w.HTTP.Addr = c.HTTPAddr
+	w.HTTP.Token = c.HTTPToken
 	w.Log.Level = c.LogLevel
 
 	b, err := yaml.Marshal(&w)

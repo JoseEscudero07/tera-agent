@@ -43,6 +43,12 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1.0.0/).
 - **config.yaml** (`gopkg.in/yaml.v3`) con `server`/`agent`/`printer`/`heartbeat`/`log`.
 - `Transport` + **LocalTransport**: modo local sin backend; seam listo para el
   futuro `WebSocketTransport`.
+- **Web service HTTP local** (`tera-agent serve`) para integración con Django:
+  `GET /health`, `GET /printers`, `POST /print` (multipart o JSON base64). Reusa
+  el motor de impresión; opcional bearer token; `run` lo expone si `http.addr`
+  está configurado. Guía en `docs/HTTP_API.md`.
+- **Servicio de Windows** (`service install|uninstall|start|stop`) con
+  `x/sys/windows/svc` e instalador `scripts/windows-install.ps1`.
 - Diseño del protocolo WebSocket (Fase 4) en `docs/protocol/`.
 - Manual de instalación (`docs/INSTALL.md`) y estado del MVP con pruebas y
   problemas conocidos (`docs/MVP.md`).
