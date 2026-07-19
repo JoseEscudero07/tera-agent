@@ -1,0 +1,18 @@
+# Binaries
+/bin/
+/dist/
+tera-agent
+tera-agent.exe
+
+# Local config with secrets (Token). Never commit.
+config.json
+
+# Go
+*.test
+*.out
+coverage.*
+
+# Editors / OS
+.DS_Store
+.idea/
+.vscode/

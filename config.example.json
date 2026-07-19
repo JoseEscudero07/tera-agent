@@ -1,0 +1,6 @@
+{
+  "backend_url": "wss://erp.example.com/ws/agent/",
+  "token": "REEMPLAZAR_CON_EL_TOKEN_EMITIDO_POR_EL_BACKEND",
+  "heartbeat_seconds": 30,
+  "log_level": "info"
+}
