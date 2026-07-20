@@ -224,7 +224,8 @@
     <h2>Tera Agent</h2>
     <div class="muted">Estado: No registrado</div>
     <p class="muted mt">Este equipo aún no está vinculado a un servidor Tera ERP.</p>
-    <div class="field mt" style="text-align:left"><label>Token de registro</label><input class="input" id="reg-token" placeholder="Pega aquí el token del ERP"></div>
+    <div class="field mt" style="text-align:left"><label>URL del servidor</label><input class="input" id="reg-url" placeholder="wss://api.grupotera.cloud/ws/agent/"></div>
+    <div class="field" style="text-align:left"><label>Token de registro</label><input class="input" id="reg-token" placeholder="Pega aquí el token del ERP"></div>
     <button class="btn primary" style="width:100%" onclick="registrar()">Registrar Agente</button>
     <p class="muted mt" style="font-size:12px">Escanear código QR (próximamente)</p>
     <p class="muted" style="font-size:12px">Versión <span class="v-ver">1.0.0</span> · <span class="v-os">—</span></p>
@@ -300,7 +301,10 @@ function setStatus(state){
 
 async function loadStatus(){
   const s=await api('/api/status')||DEMO.status;
-  if(!s.registered){document.getElementById('regScreen').classList.remove('hidden');return;}
+  if(!s.registered){
+    const u=document.getElementById('reg-url'); if(u && !u.value) u.value=s.serverUrl||'';
+    document.getElementById('regScreen').classList.remove('hidden');return;
+  }
   document.getElementById('regScreen').classList.add('hidden');
   setStatus(s.state);
   document.getElementById('s-empresa').textContent=s.empresa||'—';
@@ -351,10 +355,13 @@ async function saveConfig(){
 }
 async function registrar(){
   const token=document.getElementById('reg-token').value.trim();
+  const url=document.getElementById('reg-url').value.trim();
   if(!token){toast('warn','Falta el token','Pega el token del ERP.');return;}
-  const r=await api('/api/register',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token})});
+  const r=await api('/api/register',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token,url})});
   if(DEMO_MODE){toast('ok','Registrado (demo)','Vinculado al servidor.');document.getElementById('regScreen').classList.add('hidden');return;}
-  loadStatus();
+  toast('ok','Registrado','El agente se está reconectando…');
+  // el agente se reinicia para aplicar; reintentar estado hasta que vuelva
+  setTimeout(()=>{ let n=0; const iv=setInterval(async()=>{ n++; await loadStatus(); if(n>15) clearInterval(iv); },1500); },1500);
 }
 function clearHistory(){api('/api/history',{method:'DELETE'});document.getElementById('hist-body').innerHTML='<tr><td colspan="4" class="muted">Sin registros.</td></tr>';document.getElementById('lastPrint').textContent='Sin impresiones todavía.';}
 function openData(){api('/api/open-data',{method:'POST'});}

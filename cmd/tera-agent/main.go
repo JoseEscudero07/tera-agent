@@ -290,16 +290,17 @@ func cmdUI(args []string) {
 	go runLoop(ctx, app) // connect to backend (or local mode) in the background
 
 	srv := ui.New(ui.Deps{
-		Machine:    app.Machine,
-		Info:       app.Info,
-		Discovery:  app.Discovery,
-		Engine:     app.Engine,
-		Profiles:   app.Profiles,
-		Cfg:        app.Cfg,
-		Version:    di.AgentVersion,
-		DataDir:    app.DataDir,
-		Log:        app.Log,
-		SaveConfig: app.SaveConfig,
+		Machine:      app.Machine,
+		Info:         app.Info,
+		Discovery:    app.Discovery,
+		Engine:       app.Engine,
+		Profiles:     app.Profiles,
+		Cfg:          app.Cfg,
+		Version:      di.AgentVersion,
+		DataDir:      app.DataDir,
+		Log:          app.Log,
+		SaveConfig:   app.SaveConfig,
+		OnRegistered: restartSelf, // aplica el registro reiniciando el agente
 	})
 	if !*noOpen {
 		go openBrowser("http://" + *addr)
@@ -308,6 +309,17 @@ func cmdUI(args []string) {
 		app.Log.Error("ui", "err", err)
 		os.Exit(1)
 	}
+}
+
+// restartSelf re-launches the agent with the same arguments so a new
+// configuration (e.g. after graphical registration) takes effect, then exits.
+func restartSelf() {
+	exe, err := os.Executable()
+	if err != nil {
+		return
+	}
+	_ = exec.Command(exe, os.Args[1:]...).Start()
+	os.Exit(0)
 }
 
 // openBrowser opens url in the default browser (best effort).

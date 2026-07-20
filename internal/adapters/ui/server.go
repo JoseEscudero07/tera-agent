@@ -37,6 +37,9 @@ type Deps struct {
 	DataDir    string
 	Log        ports.Logger
 	SaveConfig func(ports.Config) error // optional; persists config changes
+	// OnRegistered, if set, is called after a successful graphical registration
+	// so the agent can apply the new credentials (e.g. restart/reconnect).
+	OnRegistered func()
 }
 
 // Server is the UI HTTP server.
@@ -178,6 +181,7 @@ func (s *Server) config(w http.ResponseWriter, r *http.Request) {
 func (s *Server) register(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Token string `json:"token"`
+		URL   string `json:"url"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&body)
 	if body.Token == "" {
@@ -185,13 +189,23 @@ func (s *Server) register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.d.Cfg.Token = body.Token
+	if body.URL != "" {
+		s.d.Cfg.BackendURL = body.URL
+	}
 	if s.d.SaveConfig != nil {
 		if err := s.d.SaveConfig(s.d.Cfg); err != nil {
 			writeErr(w, err.Error())
 			return
 		}
 	}
-	writeJSON(w, map[string]any{"ok": true, "note": "reinicia el agente para conectar"})
+	writeJSON(w, map[string]any{"ok": true, "note": "aplicando registro…"})
+	// Apply the new credentials (restart/reconnect) after the response is sent.
+	if s.d.OnRegistered != nil {
+		go func() {
+			time.Sleep(700 * time.Millisecond)
+			s.d.OnRegistered()
+		}()
+	}
 }
 
 func (s *Server) openData(w http.ResponseWriter, _ *http.Request) {
