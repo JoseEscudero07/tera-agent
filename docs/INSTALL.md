@@ -90,6 +90,18 @@ impresión.
 ./tera-agent-linux run                # modo local; imprime vía CLI; sin backend
 ```
 
+## 6b. Servicio de Linux (systemd)
+
+```bash
+sudo cp dist/tera-agent-linux /usr/local/bin/tera-agent
+sudo mkdir -p /etc/tera-agent && sudo cp config.example.yaml /etc/tera-agent/config.yaml
+sudo cp deploy/systemd/tera-agent.service /etc/systemd/system/
+sudo systemctl daemon-reload && sudo systemctl enable --now tera-agent
+journalctl -u tera-agent -f          # logs
+```
+
+El servicio necesita acceso a CUPS (usuario `root` o del grupo `lp`).
+
 ## 7. Servicio de Windows
 
 Con `tera-agent.exe` y los scripts de `scripts/` en una carpeta, en **PowerShell

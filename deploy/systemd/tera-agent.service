@@ -1,0 +1,23 @@
+# Servicio systemd para Tera Agent (Linux).
+#
+# Instalación:
+#   sudo cp dist/tera-agent-linux /usr/local/bin/tera-agent
+#   sudo mkdir -p /etc/tera-agent && sudo cp config.example.yaml /etc/tera-agent/config.yaml
+#   sudo cp deploy/systemd/tera-agent.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now tera-agent
+#   journalctl -u tera-agent -f          # ver logs
+[Unit]
+Description=Tera Agent - ERP printing agent
+After=network-online.target cups.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/tera-agent run --config /etc/tera-agent/config.yaml
+Restart=always
+RestartSec=5
+# Necesita acceso a CUPS: root, o un usuario del grupo 'lp'.
+User=root
+
+[Install]
+WantedBy=multi-user.target
