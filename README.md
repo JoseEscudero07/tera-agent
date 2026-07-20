@@ -150,6 +150,7 @@ echo "Hola" | ./tera-agent print -printer XP-80 -format text   # texto -> ESC/PO
 # conectado al ERP por WebSocket:
 cp config.example.yaml config.yaml     # server.url: "ws://host:8765"
 ./tera-agent run --config config.yaml
+tera-agent.exe run --tray              # Windows: con icono en la bandeja
 ```
 
 Con `server.url` el Agent **conecta por WebSocket** al backend, se autentica con

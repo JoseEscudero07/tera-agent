@@ -44,6 +44,8 @@ type App struct {
 	// HTTPAddr/HTTPToken configure the optional local HTTP print service.
 	HTTPAddr  string
 	HTTPToken string
+	// DataDir is where runtime state and (optionally) logs live.
+	DataDir string
 }
 
 // PrintOptions tune the print engine wiring for a command.
@@ -70,7 +72,8 @@ func Build(configPath string) (*App, error) {
 	machine := agent.NewMachine()
 	isLocal := cfg.BackendURL == ""
 
-	jobStore, err := store.New(filepath.Join(dataDir(cfg), "jobs.json"))
+	dd := dataDir(cfg)
+	jobStore, err := store.New(filepath.Join(dd, "jobs.json"))
 	if err != nil {
 		return nil, err
 	}
@@ -105,6 +108,7 @@ func Build(configPath string) (*App, error) {
 		LocalMode:    isLocal,
 		HTTPAddr:     cfg.HTTPAddr,
 		HTTPToken:    cfg.HTTPToken,
+		DataDir:      dd,
 	}, nil
 }
 

@@ -67,8 +67,10 @@ Verificado con Go 1.23.5 (build + `go test -race`):
 4. **Escalado de imágenes** (`image/png`, `image/jpeg`): el renderer de imagen no
    reescala al ancho del papel (usa el tamaño original). El PDF sí se escala al
    ancho nativo. Reescalado de imágenes: pendiente.
-5. **`run` es headless**: sin icono de bandeja (tray) todavía; eso pertenece a la
-   fase de UI. El binario corre como proceso residente / servicio.
+5. **Icono de bandeja (tray)**: disponible en **Windows** (`run --tray`) con
+   estado, abrir carpeta de datos y salir. En Linux/macOS el build es headless
+   (sin dependencia de systray para evitar cgo); un tray para esas plataformas
+   queda como extensión.
 6. **Servicio de Windows**: implementado (`service install|uninstall|start|stop`
    con `x/sys/windows/svc`) + instalador `scripts/windows-install.ps1`; **pendiente
    de probar en Windows real**. En Linux/macOS no hay servicio (usar systemd/launchd).

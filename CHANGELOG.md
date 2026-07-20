@@ -68,6 +68,16 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1.0.0/).
   (rasterizer/renderer/encoder/binarizer/driver/discovery/profile).
 - Configuración migrada de JSON a **YAML** (`config.yaml`).
 
+### Added (robustez y UI)
+- **Dedupe persistente de trabajos** y **buffer offline de resultados**
+  (`adapters/store`, fichero JSON): no reimprime un job reenviado tras reinicio y
+  reenvía `job_completed`/`job_failed` al reconectar.
+- **Log rotativo a fichero** (`adapters/logger`, size-based, stdlib) además de stderr.
+- **wss/TLS** en el transporte WebSocket (+ `insecure_skip_verify` para dev).
+- **Icono de bandeja (tray) en Windows** (`run --tray`, `fyne.io/systray`, Go puro):
+  estado, abrir carpeta de datos, salir.
+- config.yaml: `server.insecure_skip_verify`, `data_dir`, `log.file/max_size_mb/max_backups`.
+
 ### Fixed
 - `.gitignore` usaba el patrón `tera-agent` sin anclar, que ignoraba el
   directorio `cmd/tera-agent/`: el entrypoint `main.go` no estaba versionado.

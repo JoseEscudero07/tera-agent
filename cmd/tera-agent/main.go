@@ -180,6 +180,7 @@ func cmdRaw(args []string) error {
 func cmdRun(args []string) {
 	fs := flag.NewFlagSet("run", flag.ExitOnError)
 	configPath := fs.String("config", "config.yaml", "path to the configuration file")
+	tray := fs.Bool("tray", false, "show a system-tray icon (Windows)")
 	_ = fs.Parse(args)
 
 	app, err := di.Build(*configPath)
@@ -204,6 +205,11 @@ func cmdRun(args []string) {
 	// Interactive: Ctrl-C / SIGTERM stop the agent.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	if *tray && traySupported() {
+		runWithTray(ctx, stop, app)
+		return
+	}
 	runLoop(ctx, app)
 }
 
@@ -359,7 +365,7 @@ Commands:
   print  --printer NAME --file F [flags]     Print PDF/image/text (PDF -> ESC/POS)
   raw    --printer NAME --file F             Send bytes unmodified
   text   --printer NAME --text "..."         Print text as ESC/POS
-  run    [--config config.yaml]              Run as a resident agent (local mode)
+  run    [--config config.yaml] [--tray]     Run as a resident agent (local mode)
   serve  [--addr 127.0.0.1:9100] [--token X] Start the HTTP print web service
   service install|uninstall|start|stop       Manage the Windows service
 
