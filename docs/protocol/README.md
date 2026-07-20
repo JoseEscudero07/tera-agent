@@ -1,7 +1,9 @@
 # Protocolo Tera Agent ↔ Django — Fase 4 (Communication)
 
-> **Estado: propuesta de diseño, pendiente de aprobación del Software Architect.**
-> No implementar código hasta aprobar. Owner: Communication Engineer.
+> **Estado: IMPLEMENTADO** (cliente WebSocket, sin seguridad/TLS aún). El Agent
+> habla este protocolo en `internal/app/lifecycle` + `internal/adapters/
+> communication/websocket`. Servidor de referencia en `examples/mock-server`.
+> Owner: Communication Engineer.
 
 Especificación completa del canal WebSocket persistente y seguro entre el ERP
 (Django) y Tera Agent. `Angular → Django API → WebSocket Server → Tera Agent →

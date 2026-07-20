@@ -72,12 +72,16 @@ Verificado con Go 1.23.5 (build + `go test -race`):
 6. **Servicio de Windows**: implementado (`service install|uninstall|start|stop`
    con `x/sys/windows/svc`) + instalador `scripts/windows-install.ps1`; **pendiente
    de probar en Windows real**. En Linux/macOS no hay servicio (usar systemd/launchd).
-7. **Backend**: `WebSocketTransport` no implementado; `run` con `server.url` usa
-   un stub que termina en `ERROR`. El protocolo está diseñado en
-   [protocol/](protocol/README.md) para la implementación de Fase 4.
+7. **Backend WebSocket**: **implementado** (Fase 4). `run` con `server.url`
+   conecta, autentica (Token, **sin TLS aún**), registra, sincroniza perfiles,
+   heartbeat, recibe PrintJobs → imprime → responde, y reconecta con backoff.
+   Verificado end-to-end con `examples/mock-server`. **Falta** TLS/wss y la
+   revisión de seguridad (expiración de Token, replay, rate limit) — Fase Security.
+   Django debe implementar el lado servidor ([protocol/](protocol/README.md)).
 
 ## 5. Siguientes pasos sugeridos
 
 - Probar en una máquina Windows real (RAW + enumeración) y ajustar estado.
-- Implementar `WebSocketTransport` (Fase 4) siguiendo `docs/protocol/`.
+- Implementar el lado servidor del protocolo en Django (base: `examples/mock-server`).
+- Seguridad: TLS/wss, validación de Token y límites (Fase Security).
 - Reescalado de imágenes y, más adelante, tray (UI) e instaladores (DevOps).

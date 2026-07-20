@@ -147,14 +147,27 @@ echo "Hola" | ./tera-agent print -printer XP-80 -format text   # texto -> ESC/PO
 
 ```bash
 ./tera-agent run                       # modo local (sin backend): imprime vía CLI
-# opcional, con configuración:
-cp config.example.yaml config.yaml     # edita server.url / printer.default
+# conectado al ERP por WebSocket:
+cp config.example.yaml config.yaml     # server.url: "ws://host:8765"
 ./tera-agent run --config config.yaml
 ```
 
-> Sin `server.url` el Agent corre en **modo local** (offline). El
-> `WebSocketTransport` para conectar con Django es la Fase 4 (protocolo diseñado
-> en [docs/protocol/](docs/protocol/README.md)).
+Con `server.url` el Agent **conecta por WebSocket** al backend, se autentica con
+el Token, se registra, sincroniza los perfiles de impresora, manda heartbeats y
+**recibe PrintJobs** que imprime (respondiendo `job_completed`/`job_failed`), con
+reconexión automática. Sin `server.url` corre en **modo local** (offline).
+
+Protocolo en [docs/protocol/](docs/protocol/README.md). Para probar sin Django,
+usa el servidor de referencia:
+
+```bash
+go run ./examples/mock-server --pdf factura.pdf --printer KL200
+# en otra terminal, con server.url: "ws://127.0.0.1:8765"
+./tera-agent run --config config.yaml
+```
+
+> Aún **sin seguridad** (ws://, sin validación estricta de Token). TLS/wss y la
+> revisión de seguridad son la fase siguiente.
 
 ## Equipo de agentes
 

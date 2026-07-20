@@ -1,54 +1,77 @@
-// Package websocket will hold the secure WebSocket implementation of
-// comms.Transport: TLS, heartbeat, reconnection with backoff, compression,
-// timeouts and the Token handshake. Owner: Communication Engineer.
-//
-// This file is a compiling STUB so the composition root wires end to end.
-// Replace it with the real implementation (analyze -> propose -> approve ->
-// implement). It must not know about printers, devices or UI.
+// Package websocket implements comms.Transport over a WebSocket connection using
+// gorilla/websocket. Supports ws:// (no TLS) and wss://. Owner: Communication
+// Engineer. It knows nothing about printers, devices or UI.
 package websocket
 
 import (
 	"context"
-	"errors"
+	"sync"
+	"time"
+
+	gws "github.com/gorilla/websocket"
 
 	"github.com/teraerp/tera-agent/internal/app/ports"
-	"github.com/teraerp/tera-agent/internal/domain/comms"
 )
 
-// ErrNotImplemented marks the pending real implementation.
-var ErrNotImplemented = errors.New("websocket transport: not implemented yet")
-
-// Transport is the stub WebSocket transport.
+// Transport is a WebSocket client transport.
 type Transport struct {
-	cfg   ports.Config
-	log   ports.Logger
-	inbox chan comms.Envelope
+	url string
+	log ports.Logger
+
+	mu    sync.Mutex // guards writes (gorilla allows a single concurrent writer)
+	conn  *gws.Conn
+	inbox chan []byte
+	done  chan struct{}
+	once  sync.Once
 }
 
-// New returns a stub Transport. The real one dials cfg.BackendURL over TLS.
-func New(cfg ports.Config, log ports.Logger) *Transport {
-	return &Transport{
-		cfg:   cfg,
-		log:   log,
-		inbox: make(chan comms.Envelope),
-	}
+// New returns a WebSocket transport dialing url.
+func New(url string, log ports.Logger) *Transport {
+	return &Transport{url: url, log: log, inbox: make(chan []byte, 32), done: make(chan struct{})}
 }
 
+// Connect dials the server and starts the read pump.
 func (t *Transport) Connect(ctx context.Context) error {
-	t.log.Warn("websocket transport is a stub", "backend", t.cfg.BackendURL)
-	return ErrNotImplemented
-}
-
-func (t *Transport) Send(ctx context.Context, msg comms.Envelope) error {
-	return ErrNotImplemented
-}
-
-func (t *Transport) Receive() <-chan comms.Envelope { return t.inbox }
-
-func (t *Transport) Close() error {
-	close(t.inbox)
+	dialer := gws.Dialer{HandshakeTimeout: 15 * time.Second}
+	conn, _, err := dialer.DialContext(ctx, t.url, nil)
+	if err != nil {
+		return err
+	}
+	t.conn = conn
+	go t.readPump()
 	return nil
 }
 
-// compile-time assertion that the stub satisfies the port.
-var _ comms.Transport = (*Transport)(nil)
+func (t *Transport) readPump() {
+	defer close(t.inbox)
+	for {
+		_, msg, err := t.conn.ReadMessage()
+		if err != nil {
+			return
+		}
+		select {
+		case t.inbox <- msg:
+		case <-t.done:
+			return
+		}
+	}
+}
+
+// Send writes one JSON frame.
+func (t *Transport) Send(_ context.Context, data []byte) error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.conn.WriteMessage(gws.TextMessage, data)
+}
+
+// Receive returns the inbound frame channel.
+func (t *Transport) Receive() <-chan []byte { return t.inbox }
+
+// Close terminates the connection.
+func (t *Transport) Close() error {
+	t.once.Do(func() { close(t.done) })
+	if t.conn != nil {
+		return t.conn.Close()
+	}
+	return nil
+}

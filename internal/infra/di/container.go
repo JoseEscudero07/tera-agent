@@ -29,13 +29,13 @@ import (
 
 // App bundles the wired components main needs to run and observe the Agent.
 type App struct {
-	Machine   *agent.Machine
-	Lifecycle *lifecycle.Lifecycle
-	Log       ports.Logger
-	Transport comms.Transport
-	Profiles  dp.ProfileCache
-	Engine    *appprint.Engine
-	Discovery dp.Discovery
+	Machine      *agent.Machine
+	Lifecycle    *lifecycle.Lifecycle
+	Log          ports.Logger
+	NewTransport func() comms.Transport
+	Profiles     dp.ProfileCache
+	Engine       *appprint.Engine
+	Discovery    dp.Discovery
 	// LocalMode is true when no backend URL is configured.
 	LocalMode bool
 	// HTTPAddr/HTTPToken configure the optional local HTTP print service.
@@ -62,35 +62,39 @@ func Build(configPath string) (*App, error) {
 
 	log := logger.New(cfg.LogLevel)
 	machine := agent.NewMachine()
+	isLocal := cfg.BackendURL == ""
 
-	local := cfg.BackendURL == ""
-	var transport comms.Transport
-	if local {
-		transport = localTransport(log)
-	} else {
-		transport = websocket.New(cfg, log)
-	}
-
+	disc := platform.NewDiscovery(log)
 	engine, profiles := newEngine(log, platform.Drivers(log), 0)
 
 	disp := dispatcher.New(log)
 	disp.Register(job.KindPrint, appprint.NewJobHandler(engine))
 
-	lc := lifecycle.New(machine, transport, disp, cfg, log)
+	newTransport := func() comms.Transport {
+		if isLocal {
+			return local.New(log)
+		}
+		return websocket.New(cfg.BackendURL, log)
+	}
+
+	lc := lifecycle.New(newTransport, machine, disp, disc, profiles, cfg, log, agentVersion)
 
 	return &App{
-		Machine:   machine,
-		Lifecycle: lc,
-		Log:       log,
-		Transport: transport,
-		Profiles:  profiles,
-		Engine:    engine,
-		Discovery: platform.NewDiscovery(log),
-		LocalMode: local,
-		HTTPAddr:  cfg.HTTPAddr,
-		HTTPToken: cfg.HTTPToken,
+		Machine:      machine,
+		Lifecycle:    lc,
+		Log:          log,
+		NewTransport: newTransport,
+		Profiles:     profiles,
+		Engine:       engine,
+		Discovery:    disc,
+		LocalMode:    isLocal,
+		HTTPAddr:     cfg.HTTPAddr,
+		HTTPToken:    cfg.HTTPToken,
 	}, nil
 }
+
+// agentVersion is reported to the Backend in hello/register/heartbeat.
+const agentVersion = "1.0.0"
 
 // BuildPrinting wires the print engine, profile cache and discovery for the CLI
 // print/printers/raw/text commands (no backend needed).
@@ -141,5 +145,3 @@ func densityBias(density int) int {
 	}
 	return (density - 3) * 20
 }
-
-func localTransport(log ports.Logger) comms.Transport { return local.New(log) }

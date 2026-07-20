@@ -49,6 +49,15 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1.0.0/).
   está configurado. Guía en `docs/HTTP_API.md`.
 - **Servicio de Windows** (`service install|uninstall|start|stop`) con
   `x/sys/windows/svc` e instalador `scripts/windows-install.ps1`.
+- **Transporte WebSocket funcional (Fase 4)** con `gorilla/websocket`: el Agent
+  conecta, hace el handshake (hello/authenticate/authenticated), se registra,
+  reporta capabilities, sincroniza perfiles (`profiles_sync`/`profiles_ack`),
+  envía heartbeats y **recibe/ejecuta PrintJobs** (`job` → `job_received` →
+  `job_completed`/`job_failed`) con idempotencia y **reconexión con backoff**.
+  Sin TLS ni validación de Token todavía (fase Security).
+- `examples/mock-server`: servidor WebSocket de referencia (lado Django) para
+  probar el agente end-to-end.
+- Test de integración del ciclo completo de sesión WebSocket.
 - Diseño del protocolo WebSocket (Fase 4) en `docs/protocol/`.
 - Manual de instalación (`docs/INSTALL.md`) y estado del MVP con pruebas y
   problemas conocidos (`docs/MVP.md`).

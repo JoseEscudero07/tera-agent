@@ -208,11 +208,12 @@ func cmdRun(args []string) {
 // runLoop runs the agent until ctx is cancelled.
 func runLoop(ctx context.Context, app *di.App) {
 	if app.LocalMode {
-		if err := app.Transport.Connect(ctx); err != nil {
+		transport := app.NewTransport()
+		if err := transport.Connect(ctx); err != nil {
 			app.Log.Error("transport", "err", err)
 			return
 		}
-		defer app.Transport.Close()
+		defer transport.Close()
 
 		if app.HTTPAddr != "" {
 			app.Log.Info("tera-agent running (local mode) with HTTP print service")
