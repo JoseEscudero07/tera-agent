@@ -40,6 +40,43 @@ func TestRasterEncoder_EmitsInitRasterAndCut(t *testing.T) {
 	}
 }
 
+// tallBinarizer returns a bitmap with content only in the first row and many
+// trailing blank rows, to exercise trailing-blank trimming.
+type tallBinarizer struct{}
+
+func (tallBinarizer) Name() string { return "tall" }
+func (tallBinarizer) Binarize(image.Image) *dp.MonoBitmap {
+	bits := make([]byte, 100) // 100 rows x 1 byte (8px wide)
+	bits[0] = 0xFF            // only the first row has content
+	return &dp.MonoBitmap{Width: 8, Height: 100, Bits: bits}
+}
+
+func TestRasterEncoder_TrimsTrailingBlankAndFeedsBeforeCut(t *testing.T) {
+	enc := NewRaster(tallBinarizer{})
+	art := dp.RasterArtifact{Pages: []image.Image{image.NewGray(image.Rect(0, 0, 8, 100))}, WidthDots: 8}
+
+	out, err := enc.Encode(context.Background(), art, dp.EncodeOptions{Cut: true})
+	if err != nil {
+		t.Fatalf("Encode error: %v", err)
+	}
+	// GS v 0 header yL/yH must encode height 1 (trimmed from 100), not 100.
+	i := bytes.Index(out, []byte{0x1D, 0x76, 0x30, 0x00})
+	if i < 0 {
+		t.Fatal("missing raster header")
+	}
+	height := int(out[i+6]) | int(out[i+7])<<8
+	if height != 1 {
+		t.Fatalf("raster height = %d, want 1 (trailing blanks trimmed)", height)
+	}
+	// Must feed (ESC J) before the cut.
+	if !bytes.Contains(out, []byte{0x1B, 0x4A}) {
+		t.Fatal("missing ESC J feed before cut")
+	}
+	if !bytes.HasSuffix(out, []byte{0x1D, 0x56, 0x00}) {
+		t.Fatal("must end with GS V 0 cut")
+	}
+}
+
 func TestRasterEncoder_RejectsWrongArtifact(t *testing.T) {
 	enc := NewRaster(stubBinarizer{})
 	_, err := enc.Encode(context.Background(), dp.TextArtifact{Body: "x"}, dp.EncodeOptions{})

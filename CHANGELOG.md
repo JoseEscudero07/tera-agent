@@ -72,3 +72,10 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1.0.0/).
 - `.gitignore` usaba el patrón `tera-agent` sin anclar, que ignoraba el
   directorio `cmd/tera-agent/`: el entrypoint `main.go` no estaba versionado.
   Patrones anclados a la raíz; `main.go` ahora en el repositorio.
+- **Impresión térmica: corte tardío / papel en blanco**. El encoder ESC/POS ahora
+  **recorta las filas en blanco finales** del raster y añade una pequeña
+  alimentación (`ESC J`) antes del corte, para cortar justo tras el contenido y no
+  desperdiciar papel (reportado en Windows con la POS-80C).
+- Añadido el comando `version`.
+- `examples/mock-server`: mantiene la conexión abierta tras el resultado (no
+  reenvía el mismo job en cada reconexión).

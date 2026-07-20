@@ -50,6 +50,8 @@ func main() {
 		cmdServe(args[1:])
 	case "service":
 		exitOn(cmdService(args[1:]))
+	case "version", "--version", "-v":
+		fmt.Println("tera-agent", di.AgentVersion)
 	case "help", "-h", "--help":
 		usage()
 	default:

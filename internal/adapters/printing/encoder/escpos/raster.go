@@ -15,12 +15,17 @@ import (
 // with small buffers accept the image.
 const bandRows = 128
 
+// cutFeedDots is fed (ESC J n) before cutting so the last content line clears
+// the cutter blade (the blade sits a few mm above the print head).
+const cutFeedDots = 60 // ~7.5mm at 203dpi
+
 // ESC/POS control sequences.
 var (
-	cmdInit     = []byte{0x1B, 0x40}                   // ESC @  (initialize)
-	cmdFullCut  = []byte{0x1D, 0x56, 0x00}             // GS V 0 (full cut)
-	cmdDrawer   = []byte{0x1B, 0x70, 0x00, 0x19, 0xFA} // ESC p 0 (kick cash drawer)
-	rasterStart = []byte{0x1D, 0x76, 0x30, 0x00}       // GS v 0 m=0
+	cmdInit       = []byte{0x1B, 0x40}                   // ESC @  (initialize)
+	cmdFullCut    = []byte{0x1D, 0x56, 0x00}             // GS V 0 (full cut)
+	cmdDrawer     = []byte{0x1B, 0x70, 0x00, 0x19, 0xFA} // ESC p 0 (kick cash drawer)
+	rasterStart   = []byte{0x1D, 0x76, 0x30, 0x00}       // GS v 0 m=0
+	feedBeforeCut = []byte{0x1B, 0x4A, cutFeedDots}      // ESC J n (feed n dots)
 )
 
 // Raster encodes raster pages as ESC/POS bit images using a Binarizer.
@@ -41,15 +46,45 @@ func (e *Raster) Encode(_ context.Context, a dp.Artifact, opts dp.EncodeOptions)
 	var buf bytes.Buffer
 	buf.Write(cmdInit)
 	for _, page := range ra.Pages {
-		writeRaster(&buf, e.bin.Binarize(page))
+		// Trim trailing blank rows so we don't feed (and cut after) the empty
+		// bottom margin of the document — the main cause of wasted paper.
+		mb := trimTrailingBlank(e.bin.Binarize(page))
+		if mb.Height == 0 {
+			continue
+		}
+		writeRaster(&buf, mb)
 	}
 	if opts.OpenDrawer {
 		buf.Write(cmdDrawer)
 	}
 	if opts.Cut {
+		buf.Write(feedBeforeCut) // clear the cutter, then cut right after content
 		buf.Write(cmdFullCut)
 	}
 	return buf.Bytes(), nil
+}
+
+// trimTrailingBlank returns the bitmap without its trailing all-white rows.
+func trimTrailingBlank(mb *dp.MonoBitmap) *dp.MonoBitmap {
+	stride := mb.Stride()
+	h := mb.Height
+	for h > 0 {
+		blank := true
+		for _, b := range mb.Bits[(h-1)*stride : h*stride] {
+			if b != 0 {
+				blank = false
+				break
+			}
+		}
+		if !blank {
+			break
+		}
+		h--
+	}
+	if h == mb.Height {
+		return mb
+	}
+	return &dp.MonoBitmap{Width: mb.Width, Height: h, Bits: mb.Bits[:h*stride]}
 }
 
 // writeRaster emits one or more GS v 0 blocks (banded by bandRows).

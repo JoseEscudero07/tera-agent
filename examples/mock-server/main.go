@@ -85,6 +85,15 @@ func serve(c *gws.Conn, pdf, printer string) {
 		}
 		if t, _ := m["type"].(string); t == "job_completed" || t == "job_failed" {
 			log.Printf("resultado del job: %v", m)
+			break
+		}
+	}
+
+	// Keep the connection open (drain heartbeats) so the Agent stays CONNECTED
+	// and we do NOT resend the job on a reconnect.
+	log.Printf("job done; keeping connection open (Ctrl-C to stop)")
+	for {
+		if _, _, err := c.ReadMessage(); err != nil {
 			return
 		}
 	}

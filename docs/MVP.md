@@ -56,12 +56,12 @@ Verificado con Go 1.23.5 (build + `go test -race`):
 
 ## 4. Problemas conocidos / limitaciones
 
-1. **Windows: sin runtime test**. El driver winspool **compila** (cross-compile
-   amd64/386/arm64 OK) pero **no se ha probado en una máquina Windows real** en
-   este entorno (no hay Windows ni `wine`). Guía de validación lista:
-   [WINDOWS_TEST.md](WINDOWS_TEST.md) (script `scripts/windows-test.ps1`).
-2. **Estado de impresora en Windows**: implementado vía `GetPrinter` nivel 6
-   (READY/BUSY/OFFLINE/ERROR); **pendiente de confirmar** en Windows real.
+1. **Windows: PROBADO y funcionando** (POS-80C, 80mm, USB). Verificado en Windows
+   real: `printers` (estado READY), `text`, `print` PDF→ESC/POS (winspool RAW) y
+   el **flujo WebSocket completo** (auth→register→profiles→job→`job_completed`).
+   Poppler instalado (`pdftoppm`) para el PDF.
+2. **Estado de impresora en Windows**: implementado vía `GetPrinter` nivel 6 y
+   **confirmado** (READY) en Windows real.
 3. **PDF en Windows** requiere `pdftoppm.exe` en el `PATH` (poppler). Sin él,
    `print` de PDF falla; `raw`/`text` funcionan igual.
 4. **Escalado de imágenes** (`image/png`, `image/jpeg`): el renderer de imagen no

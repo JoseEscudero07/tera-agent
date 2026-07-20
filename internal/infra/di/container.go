@@ -77,7 +77,7 @@ func Build(configPath string) (*App, error) {
 		return websocket.New(cfg.BackendURL, log)
 	}
 
-	lc := lifecycle.New(newTransport, machine, disp, disc, profiles, cfg, log, agentVersion)
+	lc := lifecycle.New(newTransport, machine, disp, disc, profiles, cfg, log, AgentVersion)
 
 	return &App{
 		Machine:      machine,
@@ -93,8 +93,9 @@ func Build(configPath string) (*App, error) {
 	}, nil
 }
 
-// agentVersion is reported to the Backend in hello/register/heartbeat.
-const agentVersion = "1.0.0"
+// AgentVersion is reported to the Backend in hello/register/heartbeat and by the
+// `version` command.
+const AgentVersion = "1.0.0"
 
 // BuildPrinting wires the print engine, profile cache and discovery for the CLI
 // print/printers/raw/text commands (no backend needed).
