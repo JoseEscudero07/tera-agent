@@ -29,7 +29,9 @@ func runWithTray(ctx context.Context, stop func(), app *di.App) {
 		mStatus := systray.AddMenuItem("Estado: iniciando…", "Estado del agente")
 		mStatus.Disable()
 		systray.AddSeparator()
+		mPanel := systray.AddMenuItem("Abrir panel", "Abrir el panel de Tera Agent")
 		mData := systray.AddMenuItem("Abrir carpeta de datos", "Logs y estado")
+		systray.AddSeparator()
 		mQuit := systray.AddMenuItem("Salir", "Detener el agente")
 
 		app.Machine.Subscribe(func(_, to agent.State) {
@@ -37,7 +39,9 @@ func runWithTray(ctx context.Context, stop func(), app *di.App) {
 			systray.SetTooltip("Tera Agent — " + string(to))
 		})
 
+		// Run the agent and the desktop panel (web UI) in the background.
 		go runLoop(ctx, app)
+		go func() { _ = buildUIServer(app).Run(ctx, uiAddr) }()
 
 		go func() {
 			for {
@@ -49,6 +53,8 @@ func runWithTray(ctx context.Context, stop func(), app *di.App) {
 					stop()
 					systray.Quit()
 					return
+				case <-mPanel.ClickedCh:
+					openBrowser("http://" + uiAddr)
 				case <-mData.ClickedCh:
 					if app.DataDir != "" {
 						_ = exec.Command("explorer", app.DataDir).Start()

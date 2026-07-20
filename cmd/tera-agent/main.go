@@ -289,7 +289,21 @@ func cmdUI(args []string) {
 
 	go runLoop(ctx, app) // connect to backend (or local mode) in the background
 
-	srv := ui.New(ui.Deps{
+	if !*noOpen {
+		go openBrowser("http://" + *addr)
+	}
+	if err := buildUIServer(app).Run(ctx, *addr); err != nil {
+		app.Log.Error("ui", "err", err)
+		os.Exit(1)
+	}
+}
+
+// uiAddr is the default address the desktop panel listens on.
+const uiAddr = "127.0.0.1:9180"
+
+// buildUIServer wires the desktop web UI server from the app graph.
+func buildUIServer(app *di.App) *ui.Server {
+	return ui.New(ui.Deps{
 		Machine:      app.Machine,
 		Info:         app.Info,
 		Discovery:    app.Discovery,
@@ -300,15 +314,8 @@ func cmdUI(args []string) {
 		DataDir:      app.DataDir,
 		Log:          app.Log,
 		SaveConfig:   app.SaveConfig,
-		OnRegistered: restartSelf, // aplica el registro reiniciando el agente
+		OnRegistered: restartSelf,
 	})
-	if !*noOpen {
-		go openBrowser("http://" + *addr)
-	}
-	if err := srv.Run(ctx, *addr); err != nil {
-		app.Log.Error("ui", "err", err)
-		os.Exit(1)
-	}
 }
 
 // restartSelf re-launches the agent with the same arguments so a new
