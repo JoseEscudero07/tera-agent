@@ -5,6 +5,7 @@ package websocket
 
 import (
 	"context"
+	"crypto/tls"
 	"sync"
 	"time"
 
@@ -13,10 +14,11 @@ import (
 	"github.com/teraerp/tera-agent/internal/app/ports"
 )
 
-// Transport is a WebSocket client transport.
+// Transport is a WebSocket client transport. Supports ws:// and wss:// (TLS).
 type Transport struct {
 	url string
 	log ports.Logger
+	tls *tls.Config
 
 	mu    sync.Mutex // guards writes (gorilla allows a single concurrent writer)
 	conn  *gws.Conn
@@ -25,14 +27,15 @@ type Transport struct {
 	once  sync.Once
 }
 
-// New returns a WebSocket transport dialing url.
-func New(url string, log ports.Logger) *Transport {
-	return &Transport{url: url, log: log, inbox: make(chan []byte, 32), done: make(chan struct{})}
+// New returns a WebSocket transport dialing url. tlsCfg is used for wss:// (may
+// be nil for defaults).
+func New(url string, log ports.Logger, tlsCfg *tls.Config) *Transport {
+	return &Transport{url: url, log: log, tls: tlsCfg, inbox: make(chan []byte, 32), done: make(chan struct{})}
 }
 
 // Connect dials the server and starts the read pump.
 func (t *Transport) Connect(ctx context.Context) error {
-	dialer := gws.Dialer{HandshakeTimeout: 15 * time.Second}
+	dialer := gws.Dialer{HandshakeTimeout: 15 * time.Second, TLSClientConfig: t.tls}
 	conn, _, err := dialer.DialContext(ctx, t.url, nil)
 	if err != nil {
 		return err

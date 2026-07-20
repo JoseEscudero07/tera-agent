@@ -3,6 +3,7 @@
 server:
   url: ""            # ws://host:8765 o wss://erp/ws/agent/ ; vacío = modo local
   token: ""          # Token emitido por el Backend (no lo generes tú)
+  insecure_skip_verify: false   # true SOLO en dev con wss y certificado self-signed
 agent:
   id: ""             # identificador opcional de esta instalación
 printer:
@@ -12,5 +13,9 @@ heartbeat:
 http:
   addr: "127.0.0.1:9100"   # web service local para que Django mande PDFs; "" lo desactiva
   token: ""                # si lo pones, exige 'Authorization: Bearer <token>'
+data_dir: ""         # dónde guardar estado (dedupe/pendientes); "" = por defecto del SO
 log:
   level: "info"      # debug|info|warn|error
+  file: ""           # ruta de log rotativo (además de stderr); "" = solo stderr
+  max_size_mb: 5     # rota al superar este tamaño
+  max_backups: 3     # nº de ficheros de respaldo

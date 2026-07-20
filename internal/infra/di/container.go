@@ -4,7 +4,9 @@
 package di
 
 import (
+	"crypto/tls"
 	"os"
+	"path/filepath"
 
 	"github.com/teraerp/tera-agent/internal/adapters/communication/local"
 	"github.com/teraerp/tera-agent/internal/adapters/communication/websocket"
@@ -17,6 +19,7 @@ import (
 	"github.com/teraerp/tera-agent/internal/adapters/printing/profile"
 	"github.com/teraerp/tera-agent/internal/adapters/printing/rasterizer/poppler"
 	"github.com/teraerp/tera-agent/internal/adapters/printing/renderer"
+	"github.com/teraerp/tera-agent/internal/adapters/store"
 	"github.com/teraerp/tera-agent/internal/app/dispatcher"
 	"github.com/teraerp/tera-agent/internal/app/lifecycle"
 	"github.com/teraerp/tera-agent/internal/app/ports"
@@ -60,9 +63,17 @@ func Build(configPath string) (*App, error) {
 		cfg = ports.Config{LogLevel: "info"}
 	}
 
-	log := logger.New(cfg.LogLevel)
+	log, err := logger.NewWithFile(cfg.LogLevel, cfg.LogFile, cfg.LogMaxSizeMB, cfg.LogMaxBackups)
+	if err != nil {
+		return nil, err
+	}
 	machine := agent.NewMachine()
 	isLocal := cfg.BackendURL == ""
+
+	jobStore, err := store.New(filepath.Join(dataDir(cfg), "jobs.json"))
+	if err != nil {
+		return nil, err
+	}
 
 	disc := platform.NewDiscovery(log)
 	engine, profiles := newEngine(log, platform.Drivers(log), 0)
@@ -70,14 +81,18 @@ func Build(configPath string) (*App, error) {
 	disp := dispatcher.New(log)
 	disp.Register(job.KindPrint, appprint.NewJobHandler(engine))
 
+	var tlsCfg *tls.Config
+	if cfg.InsecureSkipVerify {
+		tlsCfg = &tls.Config{InsecureSkipVerify: true} //nolint:gosec // opt-in for dev/self-signed
+	}
 	newTransport := func() comms.Transport {
 		if isLocal {
 			return local.New(log)
 		}
-		return websocket.New(cfg.BackendURL, log)
+		return websocket.New(cfg.BackendURL, log, tlsCfg)
 	}
 
-	lc := lifecycle.New(newTransport, machine, disp, disc, profiles, cfg, log, AgentVersion)
+	lc := lifecycle.New(newTransport, machine, disp, disc, profiles, jobStore, cfg, log, AgentVersion)
 
 	return &App{
 		Machine:      machine,
@@ -96,6 +111,17 @@ func Build(configPath string) (*App, error) {
 // AgentVersion is reported to the Backend in hello/register/heartbeat and by the
 // `version` command.
 const AgentVersion = "1.0.0"
+
+// dataDir resolves where the Agent persists runtime state (job dedup/pending).
+func dataDir(cfg ports.Config) string {
+	if cfg.DataDir != "" {
+		return cfg.DataDir
+	}
+	if d, err := os.UserConfigDir(); err == nil {
+		return filepath.Join(d, "tera-agent")
+	}
+	return "tera-agent-data"
+}
 
 // BuildPrinting wires the print engine, profile cache and discovery for the CLI
 // print/printers/raw/text commands (no backend needed).

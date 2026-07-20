@@ -21,11 +21,22 @@ type Config struct {
 	HeartbeatInterval time.Duration
 	// LogLevel: debug|info|warn|error.
 	LogLevel string
+	// LogFile, when set, writes rotating logs to this path (in addition to stderr).
+	LogFile string
+	// LogMaxSizeMB and LogMaxBackups control log rotation (defaults 5 and 3).
+	LogMaxSizeMB  int
+	LogMaxBackups int
 	// HTTPAddr, when set, makes `run` also expose the local HTTP print service
 	// (e.g. "127.0.0.1:9100"). Empty disables it.
 	HTTPAddr string
 	// HTTPToken, when set, requires "Authorization: Bearer <token>" on the HTTP API.
 	HTTPToken string
+	// InsecureSkipVerify disables TLS certificate verification for wss:// (dev
+	// only, e.g. self-signed certificates). Default false.
+	InsecureSkipVerify bool
+	// DataDir is where the Agent persists runtime state (processed job ids,
+	// pending results). Empty = OS-appropriate default next to the config.
+	DataDir string
 }
 
 // ConfigStore loads and persists the Agent configuration. The file-based

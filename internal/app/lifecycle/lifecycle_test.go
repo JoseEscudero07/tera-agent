@@ -14,6 +14,7 @@ import (
 	"github.com/teraerp/tera-agent/internal/adapters/communication/websocket"
 	"github.com/teraerp/tera-agent/internal/adapters/logger"
 	"github.com/teraerp/tera-agent/internal/adapters/printing/profile"
+	"github.com/teraerp/tera-agent/internal/adapters/store"
 	"github.com/teraerp/tera-agent/internal/app/dispatcher"
 	"github.com/teraerp/tera-agent/internal/app/lifecycle"
 	"github.com/teraerp/tera-agent/internal/app/ports"
@@ -115,12 +116,17 @@ func TestLifecycle_FullSessionRoundTrip(t *testing.T) {
 	disp := dispatcher.New(log)
 	disp.Register(job.KindPrint, fakeHandler{got: got})
 
+	jobStore, err := store.New(t.TempDir() + "/jobs.json")
+	if err != nil {
+		t.Fatal(err)
+	}
 	lc := lifecycle.New(
-		func() comms.Transport { return websocket.New(wsURL, log) },
+		func() comms.Transport { return websocket.New(wsURL, log, nil) },
 		agent.NewMachine(),
 		disp,
 		fakeDiscovery{},
 		profiles,
+		jobStore,
 		ports.Config{BackendURL: wsURL, Token: "tok", HeartbeatInterval: time.Minute},
 		log,
 		"test",

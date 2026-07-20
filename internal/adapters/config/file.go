@@ -21,12 +21,14 @@ func New(path string) ports.ConfigStore { return &fileStore{Path: path} }
 // wire is the on-disk YAML representation.
 type wire struct {
 	Server struct {
-		URL   string `yaml:"url"`
-		Token string `yaml:"token"`
+		URL                string `yaml:"url"`
+		Token              string `yaml:"token"`
+		InsecureSkipVerify bool   `yaml:"insecure_skip_verify"`
 	} `yaml:"server"`
 	Agent struct {
 		ID string `yaml:"id"`
 	} `yaml:"agent"`
+	DataDir string `yaml:"data_dir"`
 	Printer struct {
 		Default string `yaml:"default"`
 	} `yaml:"printer"`
@@ -38,7 +40,10 @@ type wire struct {
 		Token string `yaml:"token"`
 	} `yaml:"http"`
 	Log struct {
-		Level string `yaml:"level"`
+		Level      string `yaml:"level"`
+		File       string `yaml:"file"`
+		MaxSizeMB  int    `yaml:"max_size_mb"`
+		MaxBackups int    `yaml:"max_backups"`
 	} `yaml:"log"`
 }
 
@@ -56,14 +61,19 @@ func (f *fileStore) Load() (ports.Config, error) {
 		level = "info"
 	}
 	return ports.Config{
-		BackendURL:        w.Server.URL,
-		Token:             w.Server.Token,
-		AgentID:           w.Agent.ID,
-		DefaultPrinter:    w.Printer.Default,
-		HeartbeatInterval: time.Duration(w.Heartbeat.Seconds) * time.Second,
-		LogLevel:          level,
-		HTTPAddr:          w.HTTP.Addr,
-		HTTPToken:         w.HTTP.Token,
+		BackendURL:         w.Server.URL,
+		Token:              w.Server.Token,
+		AgentID:            w.Agent.ID,
+		DefaultPrinter:     w.Printer.Default,
+		HeartbeatInterval:  time.Duration(w.Heartbeat.Seconds) * time.Second,
+		LogLevel:           level,
+		LogFile:            w.Log.File,
+		LogMaxSizeMB:       w.Log.MaxSizeMB,
+		LogMaxBackups:      w.Log.MaxBackups,
+		HTTPAddr:           w.HTTP.Addr,
+		HTTPToken:          w.HTTP.Token,
+		InsecureSkipVerify: w.Server.InsecureSkipVerify,
+		DataDir:            w.DataDir,
 	}, nil
 }
 

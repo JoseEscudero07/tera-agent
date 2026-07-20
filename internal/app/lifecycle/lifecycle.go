@@ -12,7 +12,6 @@ import (
 	"fmt"
 	"os"
 	"runtime"
-	"sync"
 	"time"
 
 	"github.com/teraerp/tera-agent/internal/app/dispatcher"
@@ -39,20 +38,20 @@ type Lifecycle struct {
 	cfg          ports.Config
 	log          ports.Logger
 	version      string
+	store        ports.JobStore
 
-	started   time.Time
-	mu        sync.Mutex
-	processed map[string]bool // job idempotency
+	started time.Time
 }
 
 // New constructs a Lifecycle. newTransport returns a fresh transport per connect
-// so the session can reconnect.
+// so the session can reconnect. store persists idempotency and pending results.
 func New(
 	newTransport func() comms.Transport,
 	machine *agent.Machine,
 	disp *dispatcher.Dispatcher,
 	discovery dp.Discovery,
 	profiles dp.ProfileCache,
+	store ports.JobStore,
 	cfg ports.Config,
 	log ports.Logger,
 	version string,
@@ -63,10 +62,10 @@ func New(
 		dispatcher:   disp,
 		discovery:    discovery,
 		profiles:     profiles,
+		store:        store,
 		cfg:          cfg,
 		log:          log,
 		version:      version,
-		processed:    make(map[string]bool),
 	}
 }
 
@@ -113,7 +112,25 @@ func (l *Lifecycle) runOnce(ctx context.Context) error {
 	l.register(ctx, t)
 	l.setState(agent.StateConnected)
 	l.log.Info("connected to backend", "url", l.cfg.BackendURL)
+	l.flushPending(ctx, t)
 	return l.serve(ctx, t, in)
+}
+
+// flushPending resends result frames buffered while disconnected.
+func (l *Lifecycle) flushPending(ctx context.Context, t comms.Transport) {
+	frames := l.store.TakePending()
+	for i, f := range frames {
+		if err := t.Send(ctx, f); err != nil {
+			// Re-buffer the rest and stop.
+			for _, rest := range frames[i:] {
+				l.store.AddPending(rest)
+			}
+			return
+		}
+	}
+	if len(frames) > 0 {
+		l.log.Info("flushed buffered results", "count", len(frames))
+	}
 }
 
 func (l *Lifecycle) authenticate(ctx context.Context, t comms.Transport, in <-chan []byte) error {
@@ -236,12 +253,11 @@ func (l *Lifecycle) handle(ctx context.Context, t comms.Transport, raw []byte, t
 func (l *Lifecycle) handleJob(ctx context.Context, t comms.Transport, m comms.Job) {
 	_ = l.send(ctx, t, comms.JobReceived{Type: comms.TypeJobReceived, ID: m.ID})
 
-	l.mu.Lock()
-	dup := l.processed[m.ID]
-	l.mu.Unlock()
-	if dup {
+	// Idempotency across reconnects and restarts: never reprint a known job;
+	// just re-confirm its completion.
+	if l.store.Seen(m.ID) {
 		l.log.Warn("duplicate job ignored", "id", m.ID)
-		_ = l.send(ctx, t, comms.JobCompleted{Type: comms.TypeJobCompleted, ID: m.ID})
+		l.emitResult(ctx, t, comms.JobCompleted{Type: comms.TypeJobCompleted, ID: m.ID})
 		return
 	}
 
@@ -253,18 +269,28 @@ func (l *Lifecycle) handleJob(ctx context.Context, t comms.Transport, m comms.Jo
 	err := l.dispatcher.Dispatch(ctx, job.Job{ID: m.ID, Kind: kind, Payload: []byte(m.Payload), Received: start})
 	if err != nil {
 		l.log.Error("job failed", "id", m.ID, "err", err)
-		_ = l.send(ctx, t, comms.JobFailed{
+		l.emitResult(ctx, t, comms.JobFailed{
 			Type: comms.TypeJobFailed, ID: m.ID,
 			Error: comms.ErrorBody{Code: "JOB_FAILED", Message: err.Error()},
 		})
 		return
 	}
-	l.mu.Lock()
-	l.processed[m.ID] = true
-	l.mu.Unlock()
-	_ = l.send(ctx, t, comms.JobCompleted{
+	l.store.MarkDone(m.ID)
+	l.emitResult(ctx, t, comms.JobCompleted{
 		Type: comms.TypeJobCompleted, ID: m.ID, DurationMS: time.Since(start).Milliseconds(),
 	})
+}
+
+// emitResult sends a job result; if the send fails (e.g. connection dropped just
+// after printing), the frame is buffered and resent on the next reconnect.
+func (l *Lifecycle) emitResult(ctx context.Context, t comms.Transport, msg any) {
+	b, err := json.Marshal(msg)
+	if err != nil {
+		return
+	}
+	if err := t.Send(ctx, b); err != nil {
+		l.store.AddPending(b)
+	}
 }
 
 func (l *Lifecycle) sendHeartbeat(ctx context.Context, t comms.Transport) {

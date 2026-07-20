@@ -3,6 +3,7 @@
 package logger
 
 import (
+	"io"
 	"log/slog"
 	"os"
 
@@ -19,6 +20,21 @@ type slogLogger struct {
 func New(level string) ports.Logger {
 	h := slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: parseLevel(level)})
 	return &slogLogger{l: slog.New(h)}
+}
+
+// NewWithFile returns a Logger writing to stderr and to a rotating file. If file
+// is empty it behaves like New. Owner: Go Core Engineer.
+func NewWithFile(level, file string, maxSizeMB, maxBackups int) (ports.Logger, error) {
+	if file == "" {
+		return New(level), nil
+	}
+	rw, err := newRotatingWriter(file, maxSizeMB, maxBackups)
+	if err != nil {
+		return nil, err
+	}
+	w := io.MultiWriter(os.Stderr, rw)
+	h := slog.NewTextHandler(w, &slog.HandlerOptions{Level: parseLevel(level)})
+	return &slogLogger{l: slog.New(h)}, nil
 }
 
 func parseLevel(level string) slog.Level {
