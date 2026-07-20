@@ -127,6 +127,7 @@ func TestLifecycle_FullSessionRoundTrip(t *testing.T) {
 		fakeDiscovery{},
 		profiles,
 		jobStore,
+		agent.NewInfo(),
 		ports.Config{BackendURL: wsURL, Token: "tok", HeartbeatInterval: time.Minute},
 		log,
 		"test",

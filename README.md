@@ -92,8 +92,13 @@ tera-agent print --printer XP-80 --file factura.pdf   # PDF/imagen/texto -> ESC/
 tera-agent raw   --printer XP-80 --file ticket.bin    # bytes sin modificar
 tera-agent text  --printer XP-80 --text "Hola mundo"  # texto -> ESC/POS
 tera-agent run   [--config config.yaml]               # agente residente (modo local)
+tera-agent ui    [--config config.yaml]               # agente + panel de escritorio (web UI)
 tera-agent serve [--addr 127.0.0.1:9100]              # web service HTTP (Django manda PDFs)
 ```
+
+**Panel de escritorio** (`ui`): abre una ventana web con estado en vivo, empresa/sede,
+impresoras, historial, configuración y logs (temas claro/oscuro). Sirve una SPA
+embebida en `127.0.0.1:9180` y refleja el estado del agente en tiempo real.
 
 Flags de impresión: `--paper 58|80`, `--width <dots>`, `--density 1..5`,
 `--cut`, `--drawer`, `--out FILE` (dry-run sin imprimir).

@@ -112,6 +112,10 @@ type Authenticated struct {
 	AgentID   string `json:"agent_id"`
 	CompanyID string `json:"company_id"`
 	BranchID  string `json:"branch_id"`
+	// Optional human-readable names for the UI (the Backend may include them).
+	CompanyName string `json:"company_name,omitempty"`
+	BranchName  string `json:"branch_name,omitempty"`
+	Equipo      string `json:"equipo,omitempty"`
 }
 
 type AuthError struct {

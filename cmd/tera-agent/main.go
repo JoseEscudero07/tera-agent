@@ -17,13 +17,16 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"syscall"
 
 	"github.com/teraerp/tera-agent/internal/adapters/api/httpapi"
 	"github.com/teraerp/tera-agent/internal/adapters/logger"
+	"github.com/teraerp/tera-agent/internal/adapters/ui"
 	"github.com/teraerp/tera-agent/internal/domain/agent"
 	dp "github.com/teraerp/tera-agent/internal/domain/printing"
 	"github.com/teraerp/tera-agent/internal/infra/di"
@@ -48,6 +51,8 @@ func main() {
 		cmdRun(args[1:])
 	case "serve":
 		cmdServe(args[1:])
+	case "ui":
+		cmdUI(args[1:])
 	case "service":
 		exitOn(cmdService(args[1:]))
 	case "version", "--version", "-v":
@@ -261,6 +266,64 @@ func cmdServe(args []string) {
 	}
 }
 
+// cmdUI runs the agent and serves the local desktop web UI, opening it in a
+// browser window.
+func cmdUI(args []string) {
+	fs := flag.NewFlagSet("ui", flag.ExitOnError)
+	configPath := fs.String("config", "config.yaml", "path to the configuration file")
+	addr := fs.String("addr", "127.0.0.1:9180", "UI listen address")
+	noOpen := fs.Bool("no-open", false, "do not open the browser automatically")
+	_ = fs.Parse(args)
+
+	app, err := di.Build(*configPath)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "tera-agent: startup failed:", err)
+		os.Exit(1)
+	}
+	app.Machine.Subscribe(func(from, to agent.State) {
+		app.Log.Info("state changed", "from", string(from), "to", string(to))
+	})
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	go runLoop(ctx, app) // connect to backend (or local mode) in the background
+
+	srv := ui.New(ui.Deps{
+		Machine:    app.Machine,
+		Info:       app.Info,
+		Discovery:  app.Discovery,
+		Engine:     app.Engine,
+		Profiles:   app.Profiles,
+		Cfg:        app.Cfg,
+		Version:    di.AgentVersion,
+		DataDir:    app.DataDir,
+		Log:        app.Log,
+		SaveConfig: app.SaveConfig,
+	})
+	if !*noOpen {
+		go openBrowser("http://" + *addr)
+	}
+	if err := srv.Run(ctx, *addr); err != nil {
+		app.Log.Error("ui", "err", err)
+		os.Exit(1)
+	}
+}
+
+// openBrowser opens url in the default browser (best effort).
+func openBrowser(url string) {
+	var cmd *exec.Cmd
+	switch runtime.GOOS {
+	case "windows":
+		cmd = exec.Command("rundll32", "url.dll,FileProtocolHandler", url)
+	case "darwin":
+		cmd = exec.Command("open", url)
+	default:
+		cmd = exec.Command("xdg-open", url)
+	}
+	_ = cmd.Start()
+}
+
 // cmdService manages the Windows service (install|uninstall|start|stop).
 func cmdService(args []string) error {
 	if len(args) == 0 {
@@ -366,6 +429,7 @@ Commands:
   raw    --printer NAME --file F             Send bytes unmodified
   text   --printer NAME --text "..."         Print text as ESC/POS
   run    [--config config.yaml] [--tray]     Run as a resident agent (local mode)
+  ui     [--config config.yaml] [--addr ..]  Run the agent + desktop web UI
   serve  [--addr 127.0.0.1:9100] [--token X] Start the HTTP print web service
   service install|uninstall|start|stop       Manage the Windows service
 

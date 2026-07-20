@@ -68,6 +68,14 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1.0.0/).
   (rasterizer/renderer/encoder/binarizer/driver/discovery/profile).
 - Configuración migrada de JSON a **YAML** (`config.yaml`).
 
+### Added (panel de escritorio)
+- **UI web de escritorio** (`tera-agent ui`): SPA moderna embebida (Go `embed`)
+  servida en local, con estado en vivo, empresa/sede, impresoras, historial,
+  configuración y logs; temas claro/oscuro; actualización en tiempo real por
+  WebSocket local (`/ws/ui`). API JSON en el agente
+  (`/api/status|printers|test-print|config|register|open-data`). Reusa el motor
+  de impresión y la máquina de estados; abre el navegador automáticamente.
+
 ### Added (robustez y UI)
 - **Dedupe persistente de trabajos** y **buffer offline de resultados**
   (`adapters/store`, fichero JSON): no reimprime un job reenviado tras reinicio y

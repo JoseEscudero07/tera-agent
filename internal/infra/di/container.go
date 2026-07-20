@@ -46,6 +46,12 @@ type App struct {
 	HTTPToken string
 	// DataDir is where runtime state and (optionally) logs live.
 	DataDir string
+	// Info holds the identity learned from the Backend (for the UI).
+	Info *agent.Info
+	// Cfg is the loaded configuration (for the UI).
+	Cfg ports.Config
+	// SaveConfig persists configuration changes made from the UI.
+	SaveConfig func(ports.Config) error
 }
 
 // PrintOptions tune the print engine wiring for a command.
@@ -70,6 +76,7 @@ func Build(configPath string) (*App, error) {
 		return nil, err
 	}
 	machine := agent.NewMachine()
+	info := agent.NewInfo()
 	isLocal := cfg.BackendURL == ""
 
 	dd := dataDir(cfg)
@@ -95,7 +102,7 @@ func Build(configPath string) (*App, error) {
 		return websocket.New(cfg.BackendURL, log, tlsCfg)
 	}
 
-	lc := lifecycle.New(newTransport, machine, disp, disc, profiles, jobStore, cfg, log, AgentVersion)
+	lc := lifecycle.New(newTransport, machine, disp, disc, profiles, jobStore, info, cfg, log, AgentVersion)
 
 	return &App{
 		Machine:      machine,
@@ -109,6 +116,9 @@ func Build(configPath string) (*App, error) {
 		HTTPAddr:     cfg.HTTPAddr,
 		HTTPToken:    cfg.HTTPToken,
 		DataDir:      dd,
+		Info:         info,
+		Cfg:          cfg,
+		SaveConfig:   func(c ports.Config) error { return config.New(configPath).Save(c) },
 	}, nil
 }
 

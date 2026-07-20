@@ -39,6 +39,7 @@ type Lifecycle struct {
 	log          ports.Logger
 	version      string
 	store        ports.JobStore
+	info         *agent.Info
 
 	started time.Time
 }
@@ -52,6 +53,7 @@ func New(
 	discovery dp.Discovery,
 	profiles dp.ProfileCache,
 	store ports.JobStore,
+	info *agent.Info,
 	cfg ports.Config,
 	log ports.Logger,
 	version string,
@@ -63,6 +65,7 @@ func New(
 		discovery:    discovery,
 		profiles:     profiles,
 		store:        store,
+		info:         info,
 		cfg:          cfg,
 		log:          log,
 		version:      version,
@@ -163,6 +166,15 @@ func (l *Lifecycle) authenticate(ctx context.Context, t comms.Transport, in <-ch
 				var m comms.Authenticated
 				_ = json.Unmarshal(raw, &m)
 				l.log.Info("authenticated", "agent_id", m.AgentID, "company", m.CompanyID, "branch", m.BranchID)
+				if l.info != nil {
+					l.info.SetIdentity(agent.Identity{
+						UUID:     m.AgentID,
+						Empresa:  first(m.CompanyName, m.CompanyID),
+						Sucursal: first(m.BranchName, m.BranchID),
+						Equipo:   m.Equipo,
+					})
+					l.info.Touch()
+				}
 				return nil
 			case comms.TypeAuthError:
 				var m comms.AuthError
@@ -293,7 +305,17 @@ func (l *Lifecycle) emitResult(ctx context.Context, t comms.Transport, msg any) 
 	}
 }
 
+func first(a, b string) string {
+	if a != "" {
+		return a
+	}
+	return b
+}
+
 func (l *Lifecycle) sendHeartbeat(ctx context.Context, t comms.Transport) {
+	if l.info != nil {
+		l.info.Touch()
+	}
 	var ms runtime.MemStats
 	runtime.ReadMemStats(&ms)
 	_ = l.send(ctx, t, comms.Heartbeat{
