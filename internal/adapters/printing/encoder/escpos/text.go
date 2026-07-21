@@ -25,11 +25,12 @@ func (Text) Encode(_ context.Context, a dp.Artifact, opts dp.EncodeOptions) ([]b
 	var buf bytes.Buffer
 	buf.Write(cmdInit)
 	buf.WriteString(ta.Body)
-	buf.Write([]byte{'\n', '\n', '\n'})
+	buf.WriteByte('\n')
 	if opts.OpenDrawer {
 		buf.Write(cmdDrawer)
 	}
 	if opts.Cut {
+		buf.Write(feedBeforeCut) // clear the cutter, then cut right below content
 		buf.Write(cmdFullCut)
 	}
 	return buf.Bytes(), nil

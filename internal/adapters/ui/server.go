@@ -57,6 +57,9 @@ func (s *Server) Run(ctx context.Context, addr string) error {
 	mux.Handle("/", http.FileServer(http.FS(sub)))
 	mux.HandleFunc("/api/status", s.status)
 	mux.HandleFunc("/api/printers", s.printers)
+	mux.HandleFunc("/api/printers/manage", s.printersManage)
+	mux.HandleFunc("/api/printers/default", s.printersDefault)
+	mux.HandleFunc("/api/printers/drawer", s.printersDrawer)
 	mux.HandleFunc("/api/history", s.history)
 	mux.HandleFunc("/api/logs", s.logs)
 	mux.HandleFunc("/api/test-print", s.testPrint)
@@ -87,6 +90,7 @@ func (s *Server) status(w http.ResponseWriter, _ *http.Request) {
 		"empresa":    id.Empresa,
 		"sede":       id.Sucursal,
 		"equipo":     firstNonEmpty(id.Equipo, s.d.Cfg.AgentID),
+		"agentId":    s.d.Cfg.AgentID,
 		"lastSync":   humanSince(ts),
 		"version":    s.d.Version,
 		"os":         runtime.GOOS,
@@ -95,7 +99,27 @@ func (s *Server) status(w http.ResponseWriter, _ *http.Request) {
 	})
 }
 
+// printers lists discovered printers merged with their agent-local managed
+// state (GET) or removes a printer from the managed list (DELETE ?name=).
 func (s *Server) printers(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodDelete {
+		name := r.URL.Query().Get("name")
+		if name == "" {
+			writeErr(w, "falta el nombre de la impresora")
+			return
+		}
+		s.d.Cfg.Printers = removeManaged(s.d.Cfg.Printers, name)
+		if name == s.d.Cfg.DefaultPrinter {
+			s.d.Cfg.DefaultPrinter = ""
+		}
+		if err := s.persist(); err != nil {
+			writeErr(w, err.Error())
+			return
+		}
+		writeJSON(w, map[string]any{"ok": true})
+		return
+	}
+
 	list, err := s.d.Discovery.List(r.Context())
 	if err != nil {
 		writeJSON(w, []any{})
@@ -103,13 +127,86 @@ func (s *Server) printers(w http.ResponseWriter, r *http.Request) {
 	}
 	out := make([]map[string]any, 0, len(list))
 	for _, p := range list {
+		mp, managed := findManaged(s.d.Cfg.Printers, p.Name)
+		enabled := true // discovered-but-unmanaged printers are usable by default
+		role := ""
+		if managed {
+			enabled = mp.Enabled
+			role = string(mp.Role)
+		}
 		out = append(out, map[string]any{
 			"name":    p.Name,
 			"status":  string(p.Status),
 			"default": p.Name == s.d.Cfg.DefaultPrinter,
+			"managed": managed,
+			"enabled": enabled,
+			"role":    role,
 		})
 	}
 	writeJSON(w, out)
+}
+
+// printersManage upserts one printer's managed state (enabled + role).
+func (s *Server) printersManage(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Name    string `json:"name"`
+		Role    string `json:"role"`
+		Enabled bool   `json:"enabled"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&body)
+	if body.Name == "" {
+		writeErr(w, "falta el nombre de la impresora")
+		return
+	}
+	s.d.Cfg.Printers = upsertManaged(s.d.Cfg.Printers, ports.ManagedPrinter{
+		Name: body.Name, Role: ports.PrinterRole(body.Role), Enabled: body.Enabled,
+	})
+	if err := s.persist(); err != nil {
+		writeErr(w, err.Error())
+		return
+	}
+	writeJSON(w, map[string]any{"ok": true})
+}
+
+// printersDefault sets the default printer.
+func (s *Server) printersDefault(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Name string `json:"name"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&body)
+	if body.Name == "" {
+		writeErr(w, "falta el nombre de la impresora")
+		return
+	}
+	s.d.Cfg.DefaultPrinter = body.Name
+	if err := s.persist(); err != nil {
+		writeErr(w, err.Error())
+		return
+	}
+	writeJSON(w, map[string]any{"ok": true})
+}
+
+// printersDrawer opens the cash drawer wired to the given printer (ESC p).
+func (s *Server) printersDrawer(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Name string `json:"name"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&body)
+	printer := firstNonEmpty(body.Name, s.d.Cfg.DefaultPrinter)
+	if printer == "" {
+		writeErr(w, "no hay impresora disponible")
+		return
+	}
+	s.escposProfile(printer)
+	err := s.d.Engine.Print(r.Context(), dp.PrintJob{
+		PrinterID: printer, Format: dp.FormatText, Content: []byte(""),
+		Options: dp.Options{Copies: 1, OpenDrawer: true},
+	})
+	if err != nil {
+		writeErr(w, err.Error())
+		return
+	}
+	writeJSON(w, map[string]any{"ok": true, "printer": printer})
 }
 
 func (s *Server) history(w http.ResponseWriter, _ *http.Request) {
@@ -122,7 +219,11 @@ func (s *Server) logs(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (s *Server) testPrint(w http.ResponseWriter, r *http.Request) {
-	printer := s.d.Cfg.DefaultPrinter
+	var body struct {
+		Name string `json:"name"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&body)
+	printer := firstNonEmpty(body.Name, s.d.Cfg.DefaultPrinter)
 	if printer == "" {
 		if ps, _ := s.d.Discovery.List(r.Context()); len(ps) > 0 {
 			printer = ps[0].Name
@@ -132,20 +233,72 @@ func (s *Server) testPrint(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, "no hay impresora disponible")
 		return
 	}
-	s.d.Profiles.Set(dp.PrinterProfile{
-		PrinterID: printer, NativeFormats: []dp.DeviceFormat{dp.DeviceESCPOS},
-		WidthDots: 576, DPI: 203, SupportsCut: true,
-	})
-	body := fmt.Sprintf("TERA AGENT\nPrueba de impresion\n%s\n", time.Now().Format("2006-01-02 15:04"))
-	err := s.d.Engine.Print(r.Context(), dp.PrintJob{
-		PrinterID: printer, Format: dp.FormatText, Content: []byte(body),
-		Options: dp.Options{Copies: 1, Cut: true},
-	})
-	if err != nil {
+	if err := QuickTestPrint(r.Context(), s.d.Engine, s.d.Profiles, printer); err != nil {
 		writeErr(w, err.Error())
 		return
 	}
 	writeJSON(w, map[string]any{"ok": true, "printer": printer})
+}
+
+// escposProfile installs a sensible default ESC/POS profile so the local test /
+// drawer actions work without a Backend-provided profile.
+func (s *Server) escposProfile(printer string) {
+	s.d.Profiles.Set(dp.PrinterProfile{
+		PrinterID: printer, NativeFormats: []dp.DeviceFormat{dp.DeviceESCPOS},
+		WidthDots: 576, DPI: 203, SupportsCut: true, SupportsDrawer: true,
+	})
+}
+
+// QuickTestPrint installs a default ESC/POS profile and prints a short test
+// ticket on printer. Shared by the UI test-print endpoint and the tray "Probar"
+// action so both behave identically.
+func QuickTestPrint(ctx context.Context, engine *appprint.Engine, profiles dp.ProfileCache, printer string) error {
+	profiles.Set(dp.PrinterProfile{
+		PrinterID: printer, NativeFormats: []dp.DeviceFormat{dp.DeviceESCPOS},
+		WidthDots: 576, DPI: 203, SupportsCut: true, SupportsDrawer: true,
+	})
+	content := fmt.Sprintf("TERA AGENT\nPrueba de impresion\n%s\n", time.Now().Format("2006-01-02 15:04"))
+	return engine.Print(ctx, dp.PrintJob{
+		PrinterID: printer, Format: dp.FormatText, Content: []byte(content),
+		Options: dp.Options{Copies: 1, Cut: true},
+	})
+}
+
+// persist writes the current config through SaveConfig, if wired.
+func (s *Server) persist() error {
+	if s.d.SaveConfig != nil {
+		return s.d.SaveConfig(s.d.Cfg)
+	}
+	return nil
+}
+
+func findManaged(list []ports.ManagedPrinter, name string) (ports.ManagedPrinter, bool) {
+	for _, p := range list {
+		if p.Name == name {
+			return p, true
+		}
+	}
+	return ports.ManagedPrinter{}, false
+}
+
+func upsertManaged(list []ports.ManagedPrinter, mp ports.ManagedPrinter) []ports.ManagedPrinter {
+	for i := range list {
+		if list[i].Name == mp.Name {
+			list[i] = mp
+			return list
+		}
+	}
+	return append(list, mp)
+}
+
+func removeManaged(list []ports.ManagedPrinter, name string) []ports.ManagedPrinter {
+	out := list[:0]
+	for _, p := range list {
+		if p.Name != name {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 func (s *Server) config(w http.ResponseWriter, r *http.Request) {

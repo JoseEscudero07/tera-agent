@@ -16,8 +16,10 @@ import (
 const bandRows = 128
 
 // cutFeedDots is fed (ESC J n) before cutting so the last content line clears
-// the cutter blade (the blade sits a few mm above the print head).
-const cutFeedDots = 60 // ~7.5mm at 203dpi
+// the cutter blade (the blade sits ~10-15mm above the print head). Too small a
+// feed cuts through — or just above — the last lines, leaving them dangling on
+// the next receipt; this is tuned so the cut lands cleanly below the content.
+const cutFeedDots = 120 // ~15mm at 203dpi
 
 // ESC/POS control sequences.
 var (

@@ -13,7 +13,10 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/tera-agent run --config /etc/tera-agent/config.yaml
+# 'ui --no-open' corre el agente Y sirve el panel web en 127.0.0.1:9180
+# (sin abrir navegador, porque es un servicio). Abre http://127.0.0.1:9180 tú.
+# Si NO quieres panel, usa: ExecStart=/usr/local/bin/tera-agent run --config /etc/tera-agent/config.yaml
+ExecStart=/usr/local/bin/tera-agent ui --no-open --config /etc/tera-agent/config.yaml
 Restart=always
 RestartSec=5
 # Necesita acceso a CUPS: root, o un usuario del grupo 'lp'.

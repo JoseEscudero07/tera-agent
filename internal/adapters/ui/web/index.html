@@ -73,6 +73,20 @@
   .pitem .tag{font-size:11px;color:var(--muted);border:1px solid var(--border);border-radius:6px;padding:1px 6px;margin-left:6px}
   .pitem .status{margin-left:auto;color:var(--muted);font-size:12.5px;display:inline-flex;align-items:center;gap:7px}
 
+  /* Managed printer rows (Impresoras view) */
+  .prow{display:flex;align-items:center;gap:12px;padding:12px 10px;border:1px solid var(--border);border-radius:var(--radius-sm);margin-bottom:8px;flex-wrap:wrap}
+  .prow.off{opacity:.55}
+  .prow .pname{font-weight:600;display:flex;align-items:center;gap:8px;min-width:150px}
+  .prow .sel{padding:6px 8px;border-radius:6px;border:1px solid var(--border);background:var(--surface-2);color:var(--text);font-size:12.5px;font-family:inherit}
+  .prow .acts{margin-left:auto;display:flex;gap:6px;flex-wrap:wrap}
+  .prow .btn{padding:6px 10px;font-size:12.5px}
+  .prow .btn.danger{color:var(--red);border-color:color-mix(in srgb,var(--red) 40%,var(--border))}
+  .prow .btn.danger:hover{background:color-mix(in srgb,var(--red) 12%,transparent)}
+  .prow .tag.def{color:var(--accent);border-color:color-mix(in srgb,var(--accent) 45%,var(--border))}
+  .toggle.sm{width:36px;height:20px;flex:0 0 36px}
+  .toggle.sm::after{width:14px;height:14px}
+  .toggle.sm.on::after{left:19px}
+
   .btn{border:1px solid var(--border);background:var(--surface);color:var(--text);padding:9px 14px;border-radius:var(--radius-sm);cursor:pointer;font-weight:500}
   .btn:hover{background:var(--hover)}
   .btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
@@ -153,6 +167,7 @@
             <div class="row"><span class="k">Empresa</span><span class="v" id="s-empresa">—</span></div>
             <div class="row"><span class="k">Sede</span><span class="v" id="s-sede">—</span></div>
             <div class="row"><span class="k">Equipo</span><span class="v" id="s-equipo">—</span></div>
+            <div class="row"><span class="k">Servidor</span><span class="v" id="s-server">—</span></div>
             <div class="row"><span class="k">Estado</span><span class="v" id="s-estado">—</span></div>
             <div class="row"><span class="k">Última sincronización</span><span class="v" id="s-sync">—</span></div>
           </div>
@@ -172,8 +187,9 @@
       <!-- IMPRESORAS -->
       <section class="view" id="view-impresoras">
         <div class="card">
-          <h2>Impresoras detectadas</h2>
-          <div class="plist" id="printers-full"></div>
+          <h2>Impresoras</h2>
+          <p class="muted" style="margin:-6px 0 14px;font-size:12.5px">Activa las impresoras que usa este equipo, asígnales un rol y marca la predeterminada. Estos ajustes son locales del Agent.</p>
+          <div id="printers-full"></div>
         </div>
       </section>
 
@@ -268,21 +284,24 @@ themeBtn.onclick=()=>setTheme(document.documentElement.dataset.theme==='dark'?'l
 
 // --- Navegación ---
 const titles={estado:'Estado',impresoras:'Impresoras',historial:'Historial',config:'Configuración',logs:'Logs'};
-document.getElementById('nav').addEventListener('click',e=>{
-  const a=e.target.closest('a[data-view]'); if(!a)return;
-  document.querySelectorAll('.nav a').forEach(n=>n.classList.remove('active'));
-  a.classList.add('active');
-  const v=a.dataset.view;
+function showView(v){
+  if(!titles[v]) v='estado';
+  document.querySelectorAll('.nav a').forEach(n=>n.classList.toggle('active',n.dataset.view===v));
   document.querySelectorAll('.view').forEach(s=>s.classList.remove('active'));
   document.getElementById('view-'+v).classList.add('active');
   document.getElementById('title').textContent=titles[v];
   if(v==='logs') loadLogs();
+  if(v==='impresoras') loadPrinters();
+}
+document.getElementById('nav').addEventListener('click',e=>{
+  const a=e.target.closest('a[data-view]'); if(!a)return;
+  showView(a.dataset.view);
 });
 
 // --- API con fallback a demo ---
 const DEMO={
   status:{registered:true,state:'CONNECTED',empresa:'SUMIPROD DE LA COSTA S.A.S.',sede:'Sede Principal',equipo:'CAJA-01',lastSync:'hace 3 s',version:'1.0.0',os:'windows',dataDir:'C:\\\\ProgramData\\\\TeraAgent',serverUrl:'wss://erp.midominio.com/ws/agent/'},
-  printers:[{name:'POS80',status:'READY',default:true},{name:'HP LaserJet Pro',status:'READY'},{name:'Kitchen Printer',status:'OFFLINE'}],
+  printers:[{name:'POS80',status:'READY',default:true,managed:true,enabled:true,role:'receipt'},{name:'HP LaserJet Pro',status:'READY',managed:true,enabled:true,role:'a4'},{name:'Kitchen Printer',status:'OFFLINE',managed:true,enabled:true,role:'kitchen'}],
   history:[{date:'20/07 10:43',doc:'FV-000254',printer:'POS80',status:'COMPLETADO'},{date:'20/07 10:38',doc:'FV-253',printer:'POS80',status:'COMPLETADO'},{date:'20/07 10:31',doc:'FV-252',printer:'HP',status:'COMPLETADO'},{date:'20/07 10:20',doc:'FV-251',printer:'POS80',status:'FALLIDO'}]
 };
 let DEMO_MODE=false;
@@ -309,7 +328,8 @@ async function loadStatus(){
   setStatus(s.state);
   document.getElementById('s-empresa').textContent=s.empresa||'—';
   document.getElementById('s-sede').textContent=s.sede||'—';
-  document.getElementById('s-equipo').textContent=s.equipo||'—';
+  document.getElementById('s-equipo').textContent=s.equipo||s.agentId||'—';
+  document.getElementById('s-server').textContent=s.serverUrl||'Modo local (sin servidor)';
   document.getElementById('s-sync').textContent=fmtSync(s.lastSync);
   document.getElementById('ver').textContent=s.version||'1.0.0';
   document.getElementById('os').textContent=s.os||'—';
@@ -327,15 +347,62 @@ async function loadConfig(){
   const log=document.getElementById('c-log'); if(log && cfg.log && document.activeElement!==log) log.value=cfg.log;
 }
 
+// Roles: valor interno (config) -> etiqueta visible.
+const ROLES={'':'Sin rol',receipt:'Recibo',kitchen:'Cocina',a4:'A4 / Factura',label:'Etiqueta'};
+let PRINTERS=[]; // última lista cargada (para leer estado actual en las acciones)
+const pdot=s=>s==='READY'?'green':(s==='OFFLINE'||s==='ERROR'?'red':'amber');
+const esc=s=>String(s).replace(/"/g,'&quot;');
+
+// Fila compacta (Estado): solo lectura.
 function printerRow(p){
   const st=P_STATUS[p.status]||'—';
-  const dc=p.status==='READY'?'green':(p.status==='OFFLINE'||p.status==='ERROR'?'red':'amber');
-  return `<div class="pitem"><span class="dot ${dc}"></span><span class="name">${p.name}</span>${p.default?'<span class="tag">Predeterminada</span>':''}<span class="status">${st}</span></div>`;
+  return `<div class="pitem"><span class="dot ${pdot(p.status)}"></span><span class="name">${p.name}</span>${p.default?'<span class="tag">Predeterminada</span>':''}<span class="status">${st}</span></div>`;
+}
+
+// Fila gestionable (Impresoras): activar/desactivar, rol, predeterminada, acciones.
+function printerRowFull(p){
+  const st=P_STATUS[p.status]||'—';
+  const enabled=p.enabled!==false;
+  const opts=Object.entries(ROLES).map(([v,l])=>`<option value="${v}"${(p.role||'')===v?' selected':''}>${l}</option>`).join('');
+  const n=esc(p.name);
+  return `<div class="prow${enabled?'':' off'}">
+    <div class="toggle sm${enabled?' on':''}" title="Activar impresora" onclick="toggleEnabled('${n}')"></div>
+    <span class="pname"><span class="dot ${pdot(p.status)}"></span>${p.name}${p.default?'<span class="tag def">Predeterminada</span>':''}</span>
+    <select class="sel" title="Rol" onchange="setRole('${n}',this.value)">${opts}</select>
+    <span class="status muted" style="font-size:12.5px">${st}</span>
+    <div class="acts">
+      ${p.default?'':`<button class="btn" onclick="setDefault('${n}')">Predeterminar</button>`}
+      <button class="btn" onclick="testPrinter('${n}')">Probar</button>
+      <button class="btn" onclick="openDrawer('${n}')">Cajón</button>
+      <button class="btn danger" onclick="removePrinter('${n}')">Quitar</button>
+    </div>
+  </div>`;
 }
 async function loadPrinters(){
   const list=await api('/api/printers')||DEMO.printers;
+  PRINTERS=list;
   document.getElementById('printers-mini').innerHTML=list.map(printerRow).join('')||'<div class="muted">Sin impresoras.</div>';
-  document.getElementById('printers-full').innerHTML=list.map(printerRow).join('')||'<div class="muted">Sin impresoras.</div>';
+  document.getElementById('printers-full').innerHTML=list.map(printerRowFull).join('')||'<div class="muted">No se detectaron impresoras en este equipo.</div>';
+}
+
+// --- Acciones de impresoras ---
+function findP(name){return PRINTERS.find(p=>p.name===name)||{name,role:'',enabled:true};}
+async function manage(name,role,enabled){
+  await api('/api/printers/manage',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,role,enabled})});
+  await loadPrinters();
+}
+function toggleEnabled(name){const p=findP(name);manage(name,p.role||'',!(p.enabled!==false));}
+function setRole(name,role){const p=findP(name);manage(name,role,p.enabled!==false);toast('ok','Rol actualizado',`${name}: ${ROLES[role]||role}`);}
+async function setDefault(name){
+  await api('/api/printers/default',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name})});
+  toast('ok','Predeterminada',`${name} es ahora la impresora por defecto.`);await loadPrinters();
+}
+async function testPrinter(name){toast('ok','Probando impresión',name);await api('/api/test-print',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name})});}
+async function openDrawer(name){toast('ok','Abriendo cajón',name);await api('/api/printers/drawer',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name})});}
+async function removePrinter(name){
+  if(!confirm(`¿Quitar "${name}" de las impresoras gestionadas?`))return;
+  await api('/api/printers?name='+encodeURIComponent(name),{method:'DELETE'});
+  toast('ok','Impresora quitada',name);await loadPrinters();
 }
 async function loadHistory(){
   const h=await api('/api/history')||DEMO.history;
@@ -404,6 +471,9 @@ async function init(){
   await loadStatus();await loadConfig();await loadPrinters();await loadHistory();
   connectWS();
   setInterval(loadStatus,4000);   // solo refresca estado (no toca formularios)
+  // Deep-link: el tray abre el panel en una vista concreta (?view=impresoras).
+  const v=new URLSearchParams(location.search).get('view');
+  if(v) showView(v);
 }
 init();
 </script>

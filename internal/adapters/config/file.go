@@ -15,6 +15,13 @@ import (
 // fileStore reads/writes the configuration as YAML at Path.
 type fileStore struct{ Path string }
 
+// wireManagedPrinter is the on-disk form of a ports.ManagedPrinter.
+type wireManagedPrinter struct {
+	Name    string `yaml:"name"`
+	Role    string `yaml:"role"`
+	Enabled bool   `yaml:"enabled"`
+}
+
 // New returns a ConfigStore backed by the YAML file at path.
 func New(path string) ports.ConfigStore { return &fileStore{Path: path} }
 
@@ -30,7 +37,8 @@ type wire struct {
 	} `yaml:"agent"`
 	DataDir string `yaml:"data_dir"`
 	Printer struct {
-		Default string `yaml:"default"`
+		Default string               `yaml:"default"`
+		Managed []wireManagedPrinter `yaml:"managed"`
 	} `yaml:"printer"`
 	Heartbeat struct {
 		Seconds int `yaml:"seconds"`
@@ -60,11 +68,18 @@ func (f *fileStore) Load() (ports.Config, error) {
 	if level == "" {
 		level = "info"
 	}
+	printers := make([]ports.ManagedPrinter, 0, len(w.Printer.Managed))
+	for _, p := range w.Printer.Managed {
+		printers = append(printers, ports.ManagedPrinter{
+			Name: p.Name, Role: ports.PrinterRole(p.Role), Enabled: p.Enabled,
+		})
+	}
 	return ports.Config{
 		BackendURL:         w.Server.URL,
 		Token:              w.Server.Token,
 		AgentID:            w.Agent.ID,
 		DefaultPrinter:     w.Printer.Default,
+		Printers:           printers,
 		HeartbeatInterval:  time.Duration(w.Heartbeat.Seconds) * time.Second,
 		LogLevel:           level,
 		LogFile:            w.Log.File,
@@ -81,12 +96,22 @@ func (f *fileStore) Save(c ports.Config) error {
 	var w wire
 	w.Server.URL = c.BackendURL
 	w.Server.Token = c.Token
+	w.Server.InsecureSkipVerify = c.InsecureSkipVerify
 	w.Agent.ID = c.AgentID
+	w.DataDir = c.DataDir
 	w.Printer.Default = c.DefaultPrinter
+	for _, p := range c.Printers {
+		w.Printer.Managed = append(w.Printer.Managed, wireManagedPrinter{
+			Name: p.Name, Role: string(p.Role), Enabled: p.Enabled,
+		})
+	}
 	w.Heartbeat.Seconds = int(c.HeartbeatInterval / time.Second)
 	w.HTTP.Addr = c.HTTPAddr
 	w.HTTP.Token = c.HTTPToken
 	w.Log.Level = c.LogLevel
+	w.Log.File = c.LogFile
+	w.Log.MaxSizeMB = c.LogMaxSizeMB
+	w.Log.MaxBackups = c.LogMaxBackups
 
 	b, err := yaml.Marshal(&w)
 	if err != nil {

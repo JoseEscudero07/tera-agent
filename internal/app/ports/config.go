@@ -17,6 +17,10 @@ type Config struct {
 	AgentID string
 	// DefaultPrinter is used when a command omits the printer.
 	DefaultPrinter string
+	// Printers is the agent-local list of managed printers: which discovered
+	// printers this installation actually uses, plus a local routing role. These
+	// are hints owned by the Agent, not the ERP-owned PrinterProfile.
+	Printers []ManagedPrinter
 	// HeartbeatInterval is a default; the Backend may override it at handshake.
 	HeartbeatInterval time.Duration
 	// LogLevel: debug|info|warn|error.
@@ -37,6 +41,26 @@ type Config struct {
 	// DataDir is where the Agent persists runtime state (processed job ids,
 	// pending results). Empty = OS-appropriate default next to the config.
 	DataDir string
+}
+
+// PrinterRole is the agent-local routing hint for a managed printer. It tells
+// the Agent which physical printer plays which functional role; it is not a
+// device capability (that is the ERP-owned PrinterProfile).
+type PrinterRole string
+
+const (
+	RoleReceipt PrinterRole = "receipt" // ticket / recibo (POS)
+	RoleKitchen PrinterRole = "kitchen" // comanda de cocina
+	RoleA4      PrinterRole = "a4"      // documento A4 / factura
+	RoleLabel   PrinterRole = "label"   // etiquetas
+)
+
+// ManagedPrinter is a discovered printer the user has chosen to manage: whether
+// it is enabled for this agent and the local role it plays.
+type ManagedPrinter struct {
+	Name    string
+	Role    PrinterRole
+	Enabled bool
 }
 
 // ConfigStore loads and persists the Agent configuration. The file-based

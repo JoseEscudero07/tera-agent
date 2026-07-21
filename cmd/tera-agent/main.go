@@ -318,9 +318,13 @@ func buildUIServer(app *di.App) *ui.Server {
 	})
 }
 
-// restartSelf re-launches the agent with the same arguments so a new
-// configuration (e.g. after graphical registration) takes effect, then exits.
+// restartSelf makes a new configuration (e.g. after graphical registration) take
+// effect. Under a service manager (systemd sets INVOCATION_ID) it just exits so
+// the manager restarts it; otherwise it re-launches itself with the same args.
 func restartSelf() {
+	if os.Getenv("INVOCATION_ID") != "" {
+		os.Exit(0)
+	}
 	exe, err := os.Executable()
 	if err != nil {
 		return
