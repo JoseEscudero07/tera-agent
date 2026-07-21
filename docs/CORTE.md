@@ -38,6 +38,11 @@ Resolución: si la impresora tiene su propio valor, gana; si no, se usa el globa
 si tampoco, el default interno del agente (`cut_feed_dots=232`, `top_margin_dots=16`).
 Un `0` significa "usar el default".
 
+> **Desde el panel web** (más fácil, sin editar YAML): abre
+> **http://127.0.0.1:9180** → *Impresoras*. Cada impresora tiene dos campos
+> (✂ avance de corte y ⬆ margen superior). Se guardan en la config al momento y
+> aplican al reiniciar el agente. El placeholder muestra el default global.
+
 ### Reglas de calibración
 
 **Corte inferior (`cut_feed_dots`)**
