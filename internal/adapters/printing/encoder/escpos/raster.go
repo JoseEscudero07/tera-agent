@@ -15,26 +15,48 @@ import (
 // with small buffers accept the image.
 const bandRows = 128
 
-// cutFeedDots is fed (ESC J n) before cutting so the last content line clears
-// the cutter blade (the blade sits ~10-15mm above the print head). Too small a
-// feed cuts THROUGH the last line (e.g. the date on the test ticket comes out
-// halved); this is tuned so the cut lands cleanly below the content.
-//
-// ▶ ESTE ES EL VALOR A AJUSTAR SI EL CORTE QUEDA MAL:
-//   - Corta el contenido / la última línea sale partida → SUBIR el número.
-//   - Deja demasiado papel en blanco tras el corte      → BAJAR el número.
-//   1 mm ≈ 8 dots a 203dpi. Rango válido: 0–255 (ESC J admite un solo byte).
-//   Tras cambiarlo hay que recompilar y reinstalar el binario (ver docs/CORTE.md).
-const cutFeedDots = 232 // ~29mm at 203dpi
+// Defaults used when the print job carries no per-printer calibration
+// (EncodeOptions.CutFeedDots / TopMarginDots == 0). These are now configurable
+// per printer in the agent config (printer.cut_feed_dots / top_margin_dots), so
+// a client can tune the cut for any printer model WITHOUT recompiling — see
+// docs/CORTE.md. 1mm ≈ 8 dots @203dpi.
+const (
+	// defaultCutFeedDots feeds paper (ESC J) before cutting so the last line
+	// clears the blade (the blade sits ~10-18mm above the print head).
+	defaultCutFeedDots = 232 // ~29mm
+	// defaultTopMarginDots is how many blank top rows to keep; the rest is
+	// trimmed so the receipt starts close to the content.
+	defaultTopMarginDots = 16 // ~2mm
+	maxFeedDots          = 255 // ESC J takes a single byte
+)
 
 // ESC/POS control sequences.
 var (
-	cmdInit       = []byte{0x1B, 0x40}                   // ESC @  (initialize)
-	cmdFullCut    = []byte{0x1D, 0x56, 0x00}             // GS V 0 (full cut)
-	cmdDrawer     = []byte{0x1B, 0x70, 0x00, 0x19, 0xFA} // ESC p 0 (kick cash drawer)
-	rasterStart   = []byte{0x1D, 0x76, 0x30, 0x00}       // GS v 0 m=0
-	feedBeforeCut = []byte{0x1B, 0x4A, cutFeedDots}      // ESC J n (feed n dots)
+	cmdInit     = []byte{0x1B, 0x40}                   // ESC @  (initialize)
+	cmdFullCut  = []byte{0x1D, 0x56, 0x00}             // GS V 0 (full cut)
+	cmdDrawer   = []byte{0x1B, 0x70, 0x00, 0x19, 0xFA} // ESC p 0 (kick cash drawer)
+	rasterStart = []byte{0x1D, 0x76, 0x30, 0x00}       // GS v 0 m=0
 )
+
+// escJFeed returns "ESC J n" (feed n dots), resolving 0 to the default and
+// clamping to the one-byte maximum.
+func escJFeed(dots int) []byte {
+	if dots <= 0 {
+		dots = defaultCutFeedDots
+	}
+	if dots > maxFeedDots {
+		dots = maxFeedDots
+	}
+	return []byte{0x1B, 0x4A, byte(dots)}
+}
+
+// resolveTopMargin resolves 0 to the default top margin.
+func resolveTopMargin(dots int) int {
+	if dots <= 0 {
+		return defaultTopMarginDots
+	}
+	return dots
+}
 
 // Raster encodes raster pages as ESC/POS bit images using a Binarizer.
 type Raster struct{ bin dp.Binarizer }
@@ -57,10 +79,10 @@ func (e *Raster) Encode(_ context.Context, a dp.Artifact, opts dp.EncodeOptions)
 		// Trim trailing blank rows so we don't feed (and cut after) the empty
 		// bottom margin of the document — the main cause of wasted paper.
 		mb := trimTrailingBlank(e.bin.Binarize(page))
-		// Halve the blank top margin of the first page so the receipt starts
-		// closer to the content (leaves ~half the leading paper it did before).
+		// Trim the blank top margin of the first page down to the configured
+		// number of dots so the receipt starts close to the content.
 		if i == 0 {
-			mb = halveLeadingBlank(mb)
+			mb = trimLeadingBlankTo(mb, resolveTopMargin(opts.TopMarginDots))
 		}
 		if mb.Height == 0 {
 			continue
@@ -71,16 +93,19 @@ func (e *Raster) Encode(_ context.Context, a dp.Artifact, opts dp.EncodeOptions)
 		buf.Write(cmdDrawer)
 	}
 	if opts.Cut {
-		buf.Write(feedBeforeCut) // clear the cutter, then cut right after content
+		buf.Write(escJFeed(opts.CutFeedDots)) // clear the cutter, then cut below content
 		buf.Write(cmdFullCut)
 	}
 	return buf.Bytes(), nil
 }
 
-// halveLeadingBlank removes HALF of the fully-blank rows at the top so the
-// receipt starts closer to the content without cropping it. Leaving half (rather
-// than all) keeps a small, deliberate top margin.
-func halveLeadingBlank(mb *dp.MonoBitmap) *dp.MonoBitmap {
+// trimLeadingBlankTo removes fully-blank rows from the top until at most `keep`
+// blank rows remain, so the receipt starts close to the content without cropping
+// it. If there is already less blank than `keep`, the bitmap is unchanged.
+func trimLeadingBlankTo(mb *dp.MonoBitmap, keep int) *dp.MonoBitmap {
+	if keep < 0 {
+		keep = 0
+	}
 	stride := mb.Stride()
 	blank := 0
 	for blank < mb.Height {
@@ -96,10 +121,10 @@ func halveLeadingBlank(mb *dp.MonoBitmap) *dp.MonoBitmap {
 		}
 		blank++
 	}
-	remove := blank / 2
-	if remove == 0 {
+	if blank <= keep {
 		return mb
 	}
+	remove := blank - keep
 	return &dp.MonoBitmap{Width: mb.Width, Height: mb.Height - remove, Bits: mb.Bits[remove*stride:]}
 }
 

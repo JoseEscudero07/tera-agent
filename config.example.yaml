@@ -8,6 +8,16 @@ agent:
   id: ""             # identificador opcional de esta instalación
 printer:
   default: "XP-80"   # impresora por defecto para los comandos
+  # Calibración del corte (sin recompilar). 1mm ≈ 8 dots @203dpi.
+  cut_feed_dots: 232    # avance antes del corte (default global). 0 = default interno
+  top_margin_dots: 16   # filas en blanco a dejar arriba (default global). 0 = default interno
+  # Overrides por impresora (cada modelo pone la cuchilla a distinta distancia):
+  managed:
+    - name: "XP-80"
+      cut_feed_dots: 248
+      top_margin_dots: 12
+    # - name: "EPSON TM-T20"
+    #   cut_feed_dots: 210
 heartbeat:
   seconds: 30
 http:

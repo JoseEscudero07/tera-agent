@@ -17,9 +17,11 @@ type fileStore struct{ Path string }
 
 // wireManagedPrinter is the on-disk form of a ports.ManagedPrinter.
 type wireManagedPrinter struct {
-	Name    string `yaml:"name"`
-	Role    string `yaml:"role"`
-	Enabled bool   `yaml:"enabled"`
+	Name          string `yaml:"name"`
+	Role          string `yaml:"role"`
+	Enabled       bool   `yaml:"enabled"`
+	CutFeedDots   int    `yaml:"cut_feed_dots"`
+	TopMarginDots int    `yaml:"top_margin_dots"`
 }
 
 // New returns a ConfigStore backed by the YAML file at path.
@@ -37,8 +39,10 @@ type wire struct {
 	} `yaml:"agent"`
 	DataDir string `yaml:"data_dir"`
 	Printer struct {
-		Default string               `yaml:"default"`
-		Managed []wireManagedPrinter `yaml:"managed"`
+		Default       string               `yaml:"default"`
+		CutFeedDots   int                  `yaml:"cut_feed_dots"`
+		TopMarginDots int                  `yaml:"top_margin_dots"`
+		Managed       []wireManagedPrinter `yaml:"managed"`
 	} `yaml:"printer"`
 	Heartbeat struct {
 		Seconds int `yaml:"seconds"`
@@ -72,6 +76,7 @@ func (f *fileStore) Load() (ports.Config, error) {
 	for _, p := range w.Printer.Managed {
 		printers = append(printers, ports.ManagedPrinter{
 			Name: p.Name, Role: ports.PrinterRole(p.Role), Enabled: p.Enabled,
+			CutFeedDots: p.CutFeedDots, TopMarginDots: p.TopMarginDots,
 		})
 	}
 	return ports.Config{
@@ -80,6 +85,8 @@ func (f *fileStore) Load() (ports.Config, error) {
 		AgentID:            w.Agent.ID,
 		DefaultPrinter:     w.Printer.Default,
 		Printers:           printers,
+		CutFeedDots:        w.Printer.CutFeedDots,
+		TopMarginDots:      w.Printer.TopMarginDots,
 		HeartbeatInterval:  time.Duration(w.Heartbeat.Seconds) * time.Second,
 		LogLevel:           level,
 		LogFile:            w.Log.File,
@@ -100,9 +107,12 @@ func (f *fileStore) Save(c ports.Config) error {
 	w.Agent.ID = c.AgentID
 	w.DataDir = c.DataDir
 	w.Printer.Default = c.DefaultPrinter
+	w.Printer.CutFeedDots = c.CutFeedDots
+	w.Printer.TopMarginDots = c.TopMarginDots
 	for _, p := range c.Printers {
 		w.Printer.Managed = append(w.Printer.Managed, wireManagedPrinter{
 			Name: p.Name, Role: string(p.Role), Enabled: p.Enabled,
+			CutFeedDots: p.CutFeedDots, TopMarginDots: p.TopMarginDots,
 		})
 	}
 	w.Heartbeat.Seconds = int(c.HeartbeatInterval / time.Second)

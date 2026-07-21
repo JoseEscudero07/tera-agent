@@ -28,6 +28,13 @@ type EncodeOptions struct {
 	WidthDots  int
 	Cut        bool
 	OpenDrawer bool
+	// CutFeedDots is how much paper to feed (ESC J) before the cut so the last
+	// line clears the blade. Per-printer (blade distance varies by model). 0 lets
+	// the encoder use its built-in default.
+	CutFeedDots int
+	// TopMarginDots is how many blank top rows to keep (the rest is trimmed) so
+	// the receipt starts close to the content. 0 lets the encoder use its default.
+	TopMarginDots int
 }
 
 // RasterOptions parameterize a Rasterizer.

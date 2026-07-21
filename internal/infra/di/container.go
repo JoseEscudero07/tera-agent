@@ -87,6 +87,9 @@ func Build(configPath string) (*App, error) {
 
 	disc := platform.NewDiscovery(log)
 	engine, profiles := newEngine(log, platform.Drivers(log), 0)
+	// Per-printer cut calibration from config (feed before cut, top margin), so a
+	// client can tune the cut per printer without recompiling.
+	engine.SetTuning(cfg.PrinterTuning)
 
 	disp := dispatcher.New(log)
 	disp.Register(job.KindPrint, appprint.NewJobHandler(engine))

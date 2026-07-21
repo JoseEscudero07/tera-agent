@@ -89,22 +89,49 @@ func (leadingBlankBinarizer) Binarize(image.Image) *dp.MonoBitmap {
 	return &dp.MonoBitmap{Width: 8, Height: 50, Bits: bits}
 }
 
-func TestRasterEncoder_HalvesLeadingBlankTopMargin(t *testing.T) {
-	enc := NewRaster(leadingBlankBinarizer{})
-	art := dp.RasterArtifact{Pages: []image.Image{image.NewGray(image.Rect(0, 0, 8, 50))}, WidthDots: 8}
-
-	out, err := enc.Encode(context.Background(), art, dp.EncodeOptions{})
-	if err != nil {
-		t.Fatalf("Encode error: %v", err)
-	}
-	// After halving 40 leading blanks (remove 20) the raster height is 50-20 = 30.
+func rasterHeight(t *testing.T, out []byte) int {
+	t.Helper()
 	i := bytes.Index(out, []byte{0x1D, 0x76, 0x30, 0x00})
 	if i < 0 {
 		t.Fatal("missing raster header")
 	}
-	height := int(out[i+6]) | int(out[i+7])<<8
-	if height != 30 {
-		t.Fatalf("raster height = %d, want 30 (half of 40 leading blanks trimmed)", height)
+	return int(out[i+6]) | int(out[i+7])<<8
+}
+
+func TestRasterEncoder_TrimsLeadingBlankToConfiguredMargin(t *testing.T) {
+	enc := NewRaster(leadingBlankBinarizer{}) // 40 blank top rows, content at 40 and 49
+	art := dp.RasterArtifact{Pages: []image.Image{image.NewGray(image.Rect(0, 0, 8, 50))}, WidthDots: 8}
+
+	// Explicit top margin of 10 dots: keep 10, remove 30 → height 50-30 = 20.
+	out, err := enc.Encode(context.Background(), art, dp.EncodeOptions{TopMarginDots: 10})
+	if err != nil {
+		t.Fatalf("Encode error: %v", err)
+	}
+	if h := rasterHeight(t, out); h != 20 {
+		t.Fatalf("raster height = %d, want 20 (kept 10 of 40 leading blanks)", h)
+	}
+
+	// Default (0) uses defaultTopMarginDots: keep 16, remove 24 → height 26.
+	out, err = enc.Encode(context.Background(), art, dp.EncodeOptions{})
+	if err != nil {
+		t.Fatalf("Encode error: %v", err)
+	}
+	if h := rasterHeight(t, out); h != 50-(40-defaultTopMarginDots) {
+		t.Fatalf("raster height = %d, want %d (default top margin)", h, 50-(40-defaultTopMarginDots))
+	}
+}
+
+func TestRasterEncoder_CutFeedDotsFromOptions(t *testing.T) {
+	enc := NewRaster(stubBinarizer{})
+	art := dp.RasterArtifact{Pages: []image.Image{image.NewGray(image.Rect(0, 0, 8, 1))}, WidthDots: 8}
+
+	out, err := enc.Encode(context.Background(), art, dp.EncodeOptions{Cut: true, CutFeedDots: 199})
+	if err != nil {
+		t.Fatalf("Encode error: %v", err)
+	}
+	// ESC J 199 must appear right before the cut.
+	if !bytes.Contains(out, []byte{0x1B, 0x4A, 199}) {
+		t.Fatalf("missing ESC J 199 (per-printer feed): % x", out)
 	}
 }
 

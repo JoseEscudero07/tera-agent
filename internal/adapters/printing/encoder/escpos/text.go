@@ -34,7 +34,7 @@ func (Text) Encode(_ context.Context, a dp.Artifact, opts dp.EncodeOptions) ([]b
 		buf.Write(cmdDrawer)
 	}
 	if opts.Cut {
-		buf.Write(feedBeforeCut) // clear the cutter, then cut right below content
+		buf.Write(escJFeed(opts.CutFeedDots)) // clear the cutter, then cut below content
 		buf.Write(cmdFullCut)
 	}
 	return buf.Bytes(), nil

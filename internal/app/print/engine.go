@@ -16,11 +16,20 @@ type Engine struct {
 	resolver dp.Resolver
 	profiles dp.ProfileProvider
 	log      ports.Logger
+	// tuning resolves per-printer cut calibration (feed before cut, top margin).
+	// Optional; nil means the encoder uses its built-in defaults.
+	tuning func(printerID string) (cutFeedDots, topMarginDots int)
 }
 
 // NewEngine wires the engine with a resolver and a profile provider.
 func NewEngine(resolver dp.Resolver, profiles dp.ProfileProvider, log ports.Logger) *Engine {
 	return &Engine{resolver: resolver, profiles: profiles, log: log}
+}
+
+// SetTuning installs a per-printer cut-calibration resolver (from config), so
+// clients can tune the cut per printer without recompiling.
+func (e *Engine) SetTuning(fn func(printerID string) (cutFeedDots, topMarginDots int)) {
+	e.tuning = fn
 }
 
 // Print resolves and executes the pipeline for a job.
@@ -44,10 +53,16 @@ func (e *Engine) Print(ctx context.Context, job dp.PrintJob) error {
 		return err
 	}
 
+	var cutFeedDots, topMarginDots int
+	if e.tuning != nil {
+		cutFeedDots, topMarginDots = e.tuning(job.PrinterID)
+	}
 	data, err := pipe.Encoder.Encode(ctx, artifact, dp.EncodeOptions{
-		WidthDots:  profile.WidthDots,
-		Cut:        profile.SupportsCut && job.Options.Cut,
-		OpenDrawer: profile.SupportsDrawer && job.Options.OpenDrawer,
+		WidthDots:     profile.WidthDots,
+		Cut:           profile.SupportsCut && job.Options.Cut,
+		OpenDrawer:    profile.SupportsDrawer && job.Options.OpenDrawer,
+		CutFeedDots:   cutFeedDots,
+		TopMarginDots: topMarginDots,
 	})
 	if err != nil {
 		return err

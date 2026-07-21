@@ -100,8 +100,10 @@ func TestSaveLoad_ManagedPrintersAndPreservedFields(t *testing.T) {
 	store := New(path)
 	orig := ports.Config{
 		DefaultPrinter: "POS80",
+		CutFeedDots:    232,
+		TopMarginDots:  16,
 		Printers: []ports.ManagedPrinter{
-			{Name: "POS80", Role: ports.RoleReceipt, Enabled: true},
+			{Name: "POS80", Role: ports.RoleReceipt, Enabled: true, CutFeedDots: 248, TopMarginDots: 8},
 			{Name: "Kitchen", Role: ports.RoleKitchen, Enabled: false},
 		},
 		// Fields that Save used to drop silently.
@@ -133,5 +135,34 @@ func TestSaveLoad_ManagedPrintersAndPreservedFields(t *testing.T) {
 	}
 	if got.LogFile != orig.LogFile || got.LogMaxSizeMB != orig.LogMaxSizeMB || got.LogMaxBackups != orig.LogMaxBackups {
 		t.Errorf("log fields not preserved: file=%q size=%d backups=%d", got.LogFile, got.LogMaxSizeMB, got.LogMaxBackups)
+	}
+	if got.CutFeedDots != 232 || got.TopMarginDots != 16 {
+		t.Errorf("global cut tuning not preserved: feed=%d top=%d", got.CutFeedDots, got.TopMarginDots)
+	}
+	if got.Printers[0].CutFeedDots != 248 || got.Printers[0].TopMarginDots != 8 {
+		t.Errorf("per-printer cut tuning not preserved: %+v", got.Printers[0])
+	}
+}
+
+func TestPrinterTuning_PerPrinterOverridesGlobal(t *testing.T) {
+	cfg := ports.Config{
+		CutFeedDots:   232,
+		TopMarginDots: 16,
+		Printers: []ports.ManagedPrinter{
+			{Name: "XPrinter", CutFeedDots: 248},        // overrides feed, inherits top margin
+			{Name: "POS80"},                             // inherits both globals
+		},
+	}
+	// Per-printer feed override wins, top margin falls back to global.
+	if feed, top := cfg.PrinterTuning("XPrinter"); feed != 248 || top != 16 {
+		t.Errorf("XPrinter tuning = (%d,%d), want (248,16)", feed, top)
+	}
+	// Printer without overrides inherits globals.
+	if feed, top := cfg.PrinterTuning("POS80"); feed != 232 || top != 16 {
+		t.Errorf("POS80 tuning = (%d,%d), want (232,16)", feed, top)
+	}
+	// Unknown printer inherits globals.
+	if feed, top := cfg.PrinterTuning("Otra"); feed != 232 || top != 16 {
+		t.Errorf("unknown printer tuning = (%d,%d), want (232,16)", feed, top)
 	}
 }

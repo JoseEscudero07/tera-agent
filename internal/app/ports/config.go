@@ -21,6 +21,13 @@ type Config struct {
 	// printers this installation actually uses, plus a local routing role. These
 	// are hints owned by the Agent, not the ERP-owned PrinterProfile.
 	Printers []ManagedPrinter
+	// CutFeedDots is the global default paper feed (ESC J) before the cut, in
+	// dots (1mm ≈ 8 dots @203dpi). 0 = the encoder's built-in default. A printer
+	// entry can override it. Lets a client tune the cut without recompiling.
+	CutFeedDots int
+	// TopMarginDots is the global default of blank top rows to keep. 0 = the
+	// encoder's built-in default. A printer entry can override it.
+	TopMarginDots int
 	// HeartbeatInterval is a default; the Backend may override it at handshake.
 	HeartbeatInterval time.Duration
 	// LogLevel: debug|info|warn|error.
@@ -56,11 +63,36 @@ const (
 )
 
 // ManagedPrinter is a discovered printer the user has chosen to manage: whether
-// it is enabled for this agent and the local role it plays.
+// it is enabled for this agent, the local role it plays and its physical cut
+// calibration (blade distance varies by model, hence per-printer overrides).
 type ManagedPrinter struct {
 	Name    string
 	Role    PrinterRole
 	Enabled bool
+	// CutFeedDots overrides the paper fed before the cut for this printer. 0 =
+	// use the global default (Config.CutFeedDots) or the built-in default.
+	CutFeedDots int
+	// TopMarginDots overrides how many blank top rows to keep. 0 = use the global
+	// default (Config.TopMarginDots) or the built-in default.
+	TopMarginDots int
+}
+
+// PrinterTuning resolves the cut calibration for a printer: the per-printer
+// override wins, else the global default, else 0 (encoder built-in default).
+func (c Config) PrinterTuning(printerID string) (cutFeedDots, topMarginDots int) {
+	cutFeedDots, topMarginDots = c.CutFeedDots, c.TopMarginDots
+	for _, p := range c.Printers {
+		if p.Name == printerID {
+			if p.CutFeedDots != 0 {
+				cutFeedDots = p.CutFeedDots
+			}
+			if p.TopMarginDots != 0 {
+				topMarginDots = p.TopMarginDots
+			}
+			break
+		}
+	}
+	return cutFeedDots, topMarginDots
 }
 
 // ConfigStore loads and persists the Agent configuration. The file-based
