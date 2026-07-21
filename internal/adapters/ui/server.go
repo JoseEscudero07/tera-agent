@@ -96,6 +96,9 @@ func (s *Server) status(w http.ResponseWriter, _ *http.Request) {
 		"os":         runtime.GOOS,
 		"dataDir":    s.d.DataDir,
 		"serverUrl":  s.d.Cfg.BackendURL,
+		// Defaults globales de calibración (0 = usar el default interno del agente).
+		"cutFeedDots":   s.d.Cfg.CutFeedDots,
+		"topMarginDots": s.d.Cfg.TopMarginDots,
 	})
 }
 
@@ -135,31 +138,46 @@ func (s *Server) printers(w http.ResponseWriter, r *http.Request) {
 			role = string(mp.Role)
 		}
 		out = append(out, map[string]any{
-			"name":    p.Name,
-			"status":  string(p.Status),
-			"default": p.Name == s.d.Cfg.DefaultPrinter,
-			"managed": managed,
-			"enabled": enabled,
-			"role":    role,
+			"name":          p.Name,
+			"status":        string(p.Status),
+			"default":       p.Name == s.d.Cfg.DefaultPrinter,
+			"managed":       managed,
+			"enabled":       enabled,
+			"role":          role,
+			"cutFeedDots":   mp.CutFeedDots,   // 0 = usar default
+			"topMarginDots": mp.TopMarginDots, // 0 = usar default
 		})
 	}
 	writeJSON(w, out)
 }
 
-// printersManage upserts one printer's managed state (enabled + role).
+// printersManage upserts one printer's managed state (enabled, role and the
+// per-printer cut calibration).
 func (s *Server) printersManage(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Name    string `json:"name"`
-		Role    string `json:"role"`
-		Enabled bool   `json:"enabled"`
+		Name          string `json:"name"`
+		Role          string `json:"role"`
+		Enabled       bool   `json:"enabled"`
+		CutFeedDots   int    `json:"cutFeedDots"`
+		TopMarginDots int    `json:"topMarginDots"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&body)
 	if body.Name == "" {
 		writeErr(w, "falta el nombre de la impresora")
 		return
 	}
+	if body.CutFeedDots < 0 {
+		body.CutFeedDots = 0
+	}
+	if body.CutFeedDots > 255 {
+		body.CutFeedDots = 255
+	}
+	if body.TopMarginDots < 0 {
+		body.TopMarginDots = 0
+	}
 	s.d.Cfg.Printers = upsertManaged(s.d.Cfg.Printers, ports.ManagedPrinter{
 		Name: body.Name, Role: ports.PrinterRole(body.Role), Enabled: body.Enabled,
+		CutFeedDots: body.CutFeedDots, TopMarginDots: body.TopMarginDots,
 	})
 	if err := s.persist(); err != nil {
 		writeErr(w, err.Error())
