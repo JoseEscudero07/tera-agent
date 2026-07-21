@@ -49,6 +49,28 @@ func TestTextEncoder_NoCutNoFeed(t *testing.T) {
 	}
 }
 
+func TestTextEncoder_DrawerOnly_EmptyBodyNoFeed(t *testing.T) {
+	// Cuerpo vacío + OpenDrawer = "abrir cajón sin imprimir": solo init + ESC p,
+	// sin salto de línea (no debe expulsar papel) y sin corte.
+	enc := NewText()
+	out, err := enc.Encode(
+		context.Background(),
+		dp.TextArtifact{Body: ""},
+		dp.EncodeOptions{OpenDrawer: true},
+	)
+	if err != nil {
+		t.Fatalf("Encode error: %v", err)
+	}
+	// ESC @ (init) + ESC p (drawer), nada más.
+	want := []byte{0x1B, 0x40, 0x1B, 0x70, 0x00, 0x19, 0xFA}
+	if !bytes.Equal(out, want) {
+		t.Fatalf("drawer-only bytes = %v, want %v", out, want)
+	}
+	if bytes.Contains(out, []byte{'\n'}) {
+		t.Error("no debe alimentar papel (\\n) en un trabajo solo-cajón")
+	}
+}
+
 func TestTextEncoder_RejectsWrongArtifact(t *testing.T) {
 	enc := NewText()
 	if _, err := enc.Encode(context.Background(), dp.RasterArtifact{}, dp.EncodeOptions{}); err == nil {

@@ -24,8 +24,12 @@ func (Text) Encode(_ context.Context, a dp.Artifact, opts dp.EncodeOptions) ([]b
 	}
 	var buf bytes.Buffer
 	buf.Write(cmdInit)
-	buf.WriteString(ta.Body)
-	buf.WriteByte('\n')
+	// An empty body with OpenDrawer is a "drawer-only" job (cobrar sin imprimir):
+	// emit just the drawer kick, no line feed, so no blank paper is ejected.
+	if ta.Body != "" {
+		buf.WriteString(ta.Body)
+		buf.WriteByte('\n')
+	}
 	if opts.OpenDrawer {
 		buf.Write(cmdDrawer)
 	}
