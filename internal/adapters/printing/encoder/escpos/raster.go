@@ -25,7 +25,7 @@ const bandRows = 128
 //   - Deja demasiado papel en blanco tras el corte      → BAJAR el número.
 //   1 mm ≈ 8 dots a 203dpi. Rango válido: 0–255 (ESC J admite un solo byte).
 //   Tras cambiarlo hay que recompilar y reinstalar el binario (ver docs/CORTE.md).
-const cutFeedDots = 200 // ~25mm at 203dpi
+const cutFeedDots = 232 // ~29mm at 203dpi
 
 // ESC/POS control sequences.
 var (
@@ -53,10 +53,15 @@ func (e *Raster) Encode(_ context.Context, a dp.Artifact, opts dp.EncodeOptions)
 
 	var buf bytes.Buffer
 	buf.Write(cmdInit)
-	for _, page := range ra.Pages {
+	for i, page := range ra.Pages {
 		// Trim trailing blank rows so we don't feed (and cut after) the empty
 		// bottom margin of the document — the main cause of wasted paper.
 		mb := trimTrailingBlank(e.bin.Binarize(page))
+		// Halve the blank top margin of the first page so the receipt starts
+		// closer to the content (leaves ~half the leading paper it did before).
+		if i == 0 {
+			mb = halveLeadingBlank(mb)
+		}
 		if mb.Height == 0 {
 			continue
 		}
@@ -70,6 +75,32 @@ func (e *Raster) Encode(_ context.Context, a dp.Artifact, opts dp.EncodeOptions)
 		buf.Write(cmdFullCut)
 	}
 	return buf.Bytes(), nil
+}
+
+// halveLeadingBlank removes HALF of the fully-blank rows at the top so the
+// receipt starts closer to the content without cropping it. Leaving half (rather
+// than all) keeps a small, deliberate top margin.
+func halveLeadingBlank(mb *dp.MonoBitmap) *dp.MonoBitmap {
+	stride := mb.Stride()
+	blank := 0
+	for blank < mb.Height {
+		allWhite := true
+		for _, b := range mb.Bits[blank*stride : (blank+1)*stride] {
+			if b != 0 {
+				allWhite = false
+				break
+			}
+		}
+		if !allWhite {
+			break
+		}
+		blank++
+	}
+	remove := blank / 2
+	if remove == 0 {
+		return mb
+	}
+	return &dp.MonoBitmap{Width: mb.Width, Height: mb.Height - remove, Bits: mb.Bits[remove*stride:]}
 }
 
 // trimTrailingBlank returns the bitmap without its trailing all-white rows.

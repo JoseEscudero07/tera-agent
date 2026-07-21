@@ -37,6 +37,14 @@ Conversión: a 203 dpi, **1 mm ≈ 8 dots**. Ejemplos: 120 ≈ 15 mm, 160 ≈ 20
 > Este valor lo usan por igual los tickets renderizados (raster) y el ticket de
 > texto de prueba, así que se calibra una sola vez.
 
+### Margen SUPERIOR (papel en blanco arriba)
+
+En los tickets renderizados (facturas), el margen de arriba se recorta **a la
+mitad** automáticamente (`halveLeadingBlank` en `raster.go`). Si quieres dejar
+**aún menos** papel arriba, cambia la fracción en esa función (`blank / 2` → por
+ejemplo `blank * 3 / 4` para quitar 3/4). Si quieres **más** margen, baja lo que
+quita. No afecta al contenido, solo a las filas totalmente en blanco de arriba.
+
 ## Recompilar y volver a montar el panel
 
 Desde la raíz del repo (`/workspace/proyectos/tera-agent`):
