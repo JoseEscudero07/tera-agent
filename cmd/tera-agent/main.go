@@ -27,6 +27,7 @@ import (
 	"github.com/teraerp/tera-agent/internal/adapters/api/httpapi"
 	"github.com/teraerp/tera-agent/internal/adapters/logger"
 	"github.com/teraerp/tera-agent/internal/adapters/ui"
+	"github.com/teraerp/tera-agent/internal/app/ports"
 	"github.com/teraerp/tera-agent/internal/domain/agent"
 	dp "github.com/teraerp/tera-agent/internal/domain/printing"
 	"github.com/teraerp/tera-agent/internal/infra/di"
@@ -314,6 +315,7 @@ func buildUIServer(app *di.App) *ui.Server {
 		DataDir:      app.DataDir,
 		Log:          app.Log,
 		SaveConfig:   app.SaveConfig,
+		ApplyTuning:  func(c ports.Config) { app.Engine.SetTuning(c.PrinterTuning) },
 		OnRegistered: restartSelf,
 	})
 }

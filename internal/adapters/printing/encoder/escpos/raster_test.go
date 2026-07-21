@@ -135,6 +135,20 @@ func TestRasterEncoder_CutFeedDotsFromOptions(t *testing.T) {
 	}
 }
 
+func TestRasterEncoder_CutFeedOver255ChainsEscJ(t *testing.T) {
+	enc := NewRaster(stubBinarizer{})
+	art := dp.RasterArtifact{Pages: []image.Image{image.NewGray(image.Rect(0, 0, 8, 1))}, WidthDots: 8}
+
+	// 300 dots exceeds the single-byte ESC J max → must chain 255 + 45.
+	out, err := enc.Encode(context.Background(), art, dp.EncodeOptions{Cut: true, CutFeedDots: 300})
+	if err != nil {
+		t.Fatalf("Encode error: %v", err)
+	}
+	if !bytes.Contains(out, []byte{0x1B, 0x4A, 255, 0x1B, 0x4A, 45}) {
+		t.Fatalf("expected chained ESC J 255 + ESC J 45 for 300 dots: % x", out)
+	}
+}
+
 func TestRasterEncoder_RejectsWrongArtifact(t *testing.T) {
 	enc := NewRaster(stubBinarizer{})
 	_, err := enc.Encode(context.Background(), dp.TextArtifact{Body: "x"}, dp.EncodeOptions{})

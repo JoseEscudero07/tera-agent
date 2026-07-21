@@ -25,6 +25,9 @@ import (
 //go:embed web/*
 var webFS embed.FS
 
+//go:embed assets/testpage.pdf
+var testPagePDF []byte
+
 // Deps are the collaborators the UI reads from / acts on.
 type Deps struct {
 	Machine    *agent.Machine
@@ -37,6 +40,9 @@ type Deps struct {
 	DataDir    string
 	Log        ports.Logger
 	SaveConfig func(ports.Config) error // optional; persists config changes
+	// ApplyTuning, if set, re-applies the cut calibration to the running engine
+	// so panel changes take effect immediately (no restart needed).
+	ApplyTuning func(ports.Config)
 	// OnRegistered, if set, is called after a successful graphical registration
 	// so the agent can apply the new credentials (e.g. restart/reconnect).
 	OnRegistered func()
@@ -169,8 +175,8 @@ func (s *Server) printersManage(w http.ResponseWriter, r *http.Request) {
 	if body.CutFeedDots < 0 {
 		body.CutFeedDots = 0
 	}
-	if body.CutFeedDots > 255 {
-		body.CutFeedDots = 255
+	if body.CutFeedDots > 2000 {
+		body.CutFeedDots = 2000
 	}
 	if body.TopMarginDots < 0 {
 		body.TopMarginDots = 0
@@ -215,7 +221,11 @@ func (s *Server) printersDrawer(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, "no hay impresora disponible")
 		return
 	}
-	s.escposProfile(printer)
+	prof := s.ensureProfile(printer)
+	if !prof.SupportsDrawer {
+		writeErr(w, "la impresora no tiene cajón (solo impresoras térmicas con cajón)")
+		return
+	}
 	err := s.d.Engine.Print(r.Context(), dp.PrintJob{
 		PrinterID: printer, Format: dp.FormatText, Content: []byte(""),
 		Options: dp.Options{Copies: 1, OpenDrawer: true},
@@ -251,11 +261,45 @@ func (s *Server) testPrint(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, "no hay impresora disponible")
 		return
 	}
-	if err := QuickTestPrint(r.Context(), s.d.Engine, s.d.Profiles, printer); err != nil {
+	// Adaptativo: si la impresora es de tipo "normal" (perfil PDF, ej. HP láser)
+	// se envía un PDF de prueba; si es térmica (ESC/POS) se envía texto.
+	prof := s.ensureProfile(printer)
+	var err error
+	if profileIsPDF(prof) {
+		err = s.d.Engine.Print(r.Context(), dp.PrintJob{
+			PrinterID: printer, Format: dp.FormatPDF, Content: testPagePDF,
+			Options: dp.Options{Copies: 1},
+		})
+	} else {
+		err = QuickTestPrint(r.Context(), s.d.Engine, s.d.Profiles, printer)
+	}
+	if err != nil {
 		writeErr(w, err.Error())
 		return
 	}
 	writeJSON(w, map[string]any{"ok": true, "printer": printer})
+}
+
+// ensureProfile returns the printer's profile, installing a default ESC/POS
+// (thermal) one only if the Backend has not provided a profile yet — so it never
+// clobbers a real profile (e.g. a PDF/laser printer).
+func (s *Server) ensureProfile(printer string) dp.PrinterProfile {
+	if p, err := s.d.Profiles.Profile(printer); err == nil && len(p.NativeFormats) > 0 {
+		return p
+	}
+	s.escposProfile(printer)
+	p, _ := s.d.Profiles.Profile(printer)
+	return p
+}
+
+// profileIsPDF reports whether the printer consumes PDF natively (laser/inkjet).
+func profileIsPDF(p dp.PrinterProfile) bool {
+	for _, f := range p.NativeFormats {
+		if f == dp.DevicePDF {
+			return true
+		}
+	}
+	return false
 }
 
 // escposProfile installs a sensible default ESC/POS profile so the local test /
@@ -282,10 +326,16 @@ func QuickTestPrint(ctx context.Context, engine *appprint.Engine, profiles dp.Pr
 	})
 }
 
-// persist writes the current config through SaveConfig, if wired.
+// persist writes the current config through SaveConfig and re-applies the cut
+// calibration to the running engine so panel changes take effect immediately.
 func (s *Server) persist() error {
 	if s.d.SaveConfig != nil {
-		return s.d.SaveConfig(s.d.Cfg)
+		if err := s.d.SaveConfig(s.d.Cfg); err != nil {
+			return err
+		}
+	}
+	if s.d.ApplyTuning != nil {
+		s.d.ApplyTuning(s.d.Cfg)
 	}
 	return nil
 }
@@ -322,23 +372,41 @@ func removeManaged(list []ports.ManagedPrinter, name string) []ports.ManagedPrin
 func (s *Server) config(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodGet {
 		writeJSON(w, map[string]any{
-			"nombre":  s.d.Cfg.AgentID,
-			"url":     s.d.Cfg.BackendURL,
-			"log":     s.d.Cfg.LogLevel,
-			"dataDir": s.d.DataDir,
+			"nombre":        s.d.Cfg.AgentID,
+			"url":           s.d.Cfg.BackendURL,
+			"log":           s.d.Cfg.LogLevel,
+			"dataDir":       s.d.DataDir,
+			"cutFeedDots":   s.d.Cfg.CutFeedDots,
+			"topMarginDots": s.d.Cfg.TopMarginDots,
 		})
 		return
 	}
 	var body struct {
-		Nombre string `json:"nombre"`
-		URL    string `json:"url"`
-		Log    string `json:"log"`
+		Nombre        string `json:"nombre"`
+		URL           string `json:"url"`
+		Log           string `json:"log"`
+		CutFeedDots   int    `json:"cutFeedDots"`
+		TopMarginDots int    `json:"topMarginDots"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&body)
 	s.d.Cfg.AgentID = body.Nombre
 	s.d.Cfg.BackendURL = body.URL
 	if body.Log != "" {
 		s.d.Cfg.LogLevel = body.Log
+	}
+	if body.CutFeedDots < 0 {
+		body.CutFeedDots = 0
+	}
+	if body.CutFeedDots > 2000 {
+		body.CutFeedDots = 2000
+	}
+	if body.TopMarginDots < 0 {
+		body.TopMarginDots = 0
+	}
+	s.d.Cfg.CutFeedDots = body.CutFeedDots
+	s.d.Cfg.TopMarginDots = body.TopMarginDots
+	if s.d.ApplyTuning != nil {
+		s.d.ApplyTuning(s.d.Cfg)
 	}
 	if s.d.SaveConfig != nil {
 		if err := s.d.SaveConfig(s.d.Cfg); err != nil {

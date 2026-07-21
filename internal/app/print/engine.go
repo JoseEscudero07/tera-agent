@@ -6,6 +6,7 @@ package print
 
 import (
 	"context"
+	"sync"
 
 	"github.com/teraerp/tera-agent/internal/app/ports"
 	dp "github.com/teraerp/tera-agent/internal/domain/printing"
@@ -17,7 +18,9 @@ type Engine struct {
 	profiles dp.ProfileProvider
 	log      ports.Logger
 	// tuning resolves per-printer cut calibration (feed before cut, top margin).
-	// Optional; nil means the encoder uses its built-in defaults.
+	// Optional; nil means the encoder uses its built-in defaults. Guarded by mu
+	// because the UI can swap it at runtime (SetTuning) while jobs are printing.
+	mu     sync.RWMutex
 	tuning func(printerID string) (cutFeedDots, topMarginDots int)
 }
 
@@ -27,9 +30,12 @@ func NewEngine(resolver dp.Resolver, profiles dp.ProfileProvider, log ports.Logg
 }
 
 // SetTuning installs a per-printer cut-calibration resolver (from config), so
-// clients can tune the cut per printer without recompiling.
+// clients can tune the cut per printer without recompiling. Safe to call at
+// runtime (e.g. after the panel saves a new calibration).
 func (e *Engine) SetTuning(fn func(printerID string) (cutFeedDots, topMarginDots int)) {
+	e.mu.Lock()
 	e.tuning = fn
+	e.mu.Unlock()
 }
 
 // Print resolves and executes the pipeline for a job.
@@ -53,9 +59,12 @@ func (e *Engine) Print(ctx context.Context, job dp.PrintJob) error {
 		return err
 	}
 
+	e.mu.RLock()
+	tune := e.tuning
+	e.mu.RUnlock()
 	var cutFeedDots, topMarginDots int
-	if e.tuning != nil {
-		cutFeedDots, topMarginDots = e.tuning(job.PrinterID)
+	if tune != nil {
+		cutFeedDots, topMarginDots = tune(job.PrinterID)
 	}
 	data, err := pipe.Encoder.Encode(ctx, artifact, dp.EncodeOptions{
 		WidthDots:     profile.WidthDots,

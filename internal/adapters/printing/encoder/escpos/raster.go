@@ -27,7 +27,12 @@ const (
 	// defaultTopMarginDots is how many blank top rows to keep; the rest is
 	// trimmed so the receipt starts close to the content.
 	defaultTopMarginDots = 16 // ~2mm
-	maxFeedDots          = 255 // ESC J takes a single byte
+	// escJMax is the per-command limit of ESC J (a single byte). Larger feeds are
+	// achieved by chaining several ESC J commands, so cut_feed_dots is not capped
+	// at 255 — the user can configure any reasonable value.
+	escJMax = 255
+	// maxFeedDots is a safety ceiling to avoid a typo feeding a meter of paper.
+	maxFeedDots = 2000 // ~25cm
 )
 
 // ESC/POS control sequences.
@@ -38,8 +43,9 @@ var (
 	rasterStart = []byte{0x1D, 0x76, 0x30, 0x00}       // GS v 0 m=0
 )
 
-// escJFeed returns "ESC J n" (feed n dots), resolving 0 to the default and
-// clamping to the one-byte maximum.
+// escJFeed feeds `dots` of paper before the cut, resolving 0 to the default.
+// Since ESC J takes a single byte (max 255), larger feeds are emitted as several
+// chained ESC J commands — so the cut can be placed as far down as configured.
 func escJFeed(dots int) []byte {
 	if dots <= 0 {
 		dots = defaultCutFeedDots
@@ -47,7 +53,16 @@ func escJFeed(dots int) []byte {
 	if dots > maxFeedDots {
 		dots = maxFeedDots
 	}
-	return []byte{0x1B, 0x4A, byte(dots)}
+	var b []byte
+	for dots > 0 {
+		n := dots
+		if n > escJMax {
+			n = escJMax
+		}
+		b = append(b, 0x1B, 0x4A, byte(n))
+		dots -= n
+	}
+	return b
 }
 
 // resolveTopMargin resolves 0 to the default top margin.
