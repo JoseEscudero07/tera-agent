@@ -17,9 +17,15 @@ const bandRows = 128
 
 // cutFeedDots is fed (ESC J n) before cutting so the last content line clears
 // the cutter blade (the blade sits ~10-15mm above the print head). Too small a
-// feed cuts through — or just above — the last lines, leaving them dangling on
-// the next receipt; this is tuned so the cut lands cleanly below the content.
-const cutFeedDots = 120 // ~15mm at 203dpi
+// feed cuts THROUGH the last line (e.g. the date on the test ticket comes out
+// halved); this is tuned so the cut lands cleanly below the content.
+//
+// ▶ ESTE ES EL VALOR A AJUSTAR SI EL CORTE QUEDA MAL:
+//   - Corta el contenido / la última línea sale partida → SUBIR el número.
+//   - Deja demasiado papel en blanco tras el corte      → BAJAR el número.
+//   1 mm ≈ 8 dots a 203dpi. Rango válido: 0–255 (ESC J admite un solo byte).
+//   Tras cambiarlo hay que recompilar y reinstalar el binario (ver docs/CORTE.md).
+const cutFeedDots = 200 // ~25mm at 203dpi
 
 // ESC/POS control sequences.
 var (
