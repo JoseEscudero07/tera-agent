@@ -315,10 +315,16 @@ async function loadStatus(){
   document.getElementById('os').textContent=s.os||'—';
   document.querySelectorAll('.v-ver').forEach(e=>e.textContent=s.version||'1.0.0');
   document.querySelectorAll('.v-os').forEach(e=>e.textContent=s.os||'—');
-  // config prefill
-  document.getElementById('c-url').value=s.serverUrl||'';
-  document.getElementById('c-data').value=s.dataDir||'';
-  document.getElementById('c-nombre').value=s.equipo||'';
+  // NO precargar aquí el formulario de config: lo haría en cada refresco (4s) y
+  // borraría lo que el usuario está escribiendo. Se carga una sola vez (loadConfig).
+}
+
+// Carga el formulario de configuración una sola vez (sin pisar lo que se edita).
+async function loadConfig(){
+  const cfg=await api('/api/config'); if(!cfg) return;
+  const set=(id,v)=>{const el=document.getElementById(id); if(el && document.activeElement!==el) el.value=(v??'');};
+  set('c-nombre',cfg.nombre); set('c-url',cfg.url); set('c-data',cfg.dataDir);
+  const log=document.getElementById('c-log'); if(log && cfg.log && document.activeElement!==log) log.value=cfg.log;
 }
 
 function printerRow(p){
@@ -395,10 +401,9 @@ function connectWS(){
 
 // --- Init ---
 async function init(){
-  await loadStatus();await loadPrinters();await loadHistory();
-  if(DEMO_MODE){/* banner opcional */}
+  await loadStatus();await loadConfig();await loadPrinters();await loadHistory();
   connectWS();
-  setInterval(loadStatus,4000);   // fallback si no hay WS
+  setInterval(loadStatus,4000);   // solo refresca estado (no toca formularios)
 }
 init();
 </script>
