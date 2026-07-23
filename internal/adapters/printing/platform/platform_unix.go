@@ -14,8 +14,10 @@ import (
 	dp "github.com/teraerp/tera-agent/internal/domain/printing"
 )
 
-// Drivers returns the platform driver set (raw + native via CUPS).
-func Drivers(log ports.Logger) []dp.Driver {
+// Drivers returns the platform driver set (raw + native via CUPS). El Binarizer
+// se acepta para igualar la firma de Windows (donde el driver GDI lo usa); en
+// Linux/mac CUPS recibe PDF/PNG y no lo necesita.
+func Drivers(log ports.Logger, _ dp.Binarizer) []dp.Driver {
 	return []dp.Driver{drivercups.NewRaw(log), drivercups.NewNative(log)}
 }
 
@@ -27,3 +29,8 @@ func NewDiscovery(log ports.Logger) dp.Discovery { return discovery.NewCUPS(log)
 
 // OSName is the running operating system.
 func OSName() string { return runtime.GOOS }
+
+// ProfileNormalizerForOS en Linux/mac devuelve nil: CUPS acepta DevicePDF/PNG
+// y cualquier DeviceGDIRaster no tendría driver aquí. Pasar nil hace que el
+// wrapper se comporte como el cache pelado y no se pierda ni un ciclo.
+func ProfileNormalizerForOS() ProfileNormalizer { return nil }

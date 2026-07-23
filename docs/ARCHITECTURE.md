@@ -76,3 +76,10 @@ Ningún agente modifica módulos de otro sin documentar el motivo.
 `Angular → Django → WebSocket → Agent`. Nunca hay comunicación directa
 Angular ↔ Agent. El Agent **siempre** inicia la conexión (TLS). El Backend es el
 único que envía trabajos. Ver [`PROTOCOL.md`](PROTOCOL.md).
+
+## Impresión por rol (backend automático)
+
+El backend puede disparar trabajos automáticos declarando sólo el destino
+funcional (`Rol.FACTURACION`, `Rol.COCINA`, …). El Agent resuelve el rol
+contra sus impresoras managed cuando el backend no puede acertar. Diseño
+completo en [`ROLES.md`](ROLES.md).

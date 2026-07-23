@@ -53,7 +53,9 @@ func (e *Engine) Print(ctx context.Context, job dp.PrintJob) error {
 	artifact, err := pipe.Renderer.Render(ctx, job.Content, dp.RenderOptions{
 		WidthDots: profile.WidthDots,
 		DPI:       profile.DPI,
-		Color:     false,
+		// El camino GDI (láser/inyección/color) puede aprovechar color; el
+		// térmico no. El driver GDI decide por contenido si va a 1 bpp o 24 bpp.
+		Color: pipe.Encoder.Produces() == dp.DeviceGDIRaster,
 	})
 	if err != nil {
 		return err

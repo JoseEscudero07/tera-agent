@@ -6,6 +6,11 @@ package websocket
 import (
 	"context"
 	"crypto/tls"
+	"fmt"
+	"io"
+	"net/http"
+	"net/url"
+	"strings"
 	"sync"
 	"time"
 
@@ -13,6 +18,12 @@ import (
 
 	"github.com/teraerp/tera-agent/internal/app/ports"
 )
+
+// handshakeTimeout es lo que damos al servidor para completar el upgrade a
+// WebSocket. Backends con cold start (gunicorn/uvicorn dormidos, proxies) a
+// veces tardan >15s en el primer intento; 45s deja pasar esos casos sin que
+// el usuario vea reintentos aparentes.
+const handshakeTimeout = 45 * time.Second
 
 // Transport is a WebSocket client transport. Supports ws:// and wss:// (TLS).
 type Transport struct {
@@ -34,16 +45,61 @@ func New(url string, log ports.Logger, tlsCfg *tls.Config) *Transport {
 }
 
 // Connect dials the server and starts the read pump.
+//
+// Cuando el handshake falla, gorilla devuelve el genérico "bad handshake" y
+// además la *http.Response del servidor. La aprovechamos para explicar en el
+// log qué respondió de verdad (código HTTP, cuerpo corto) — es la única forma
+// de distinguir 401 (token/URL malos), 404 (endpoint mal), 502 (backend
+// caído), o un cold start que responde lento pero con éxito al retry.
 func (t *Transport) Connect(ctx context.Context) error {
-	dialer := gws.Dialer{HandshakeTimeout: 15 * time.Second, TLSClientConfig: t.tls}
-	conn, _, err := dialer.DialContext(ctx, t.url, nil)
+	dialer := gws.Dialer{HandshakeTimeout: handshakeTimeout, TLSClientConfig: t.tls}
+	t.log.Debug("ws dial", "url", redactURL(t.url))
+	conn, resp, err := dialer.DialContext(ctx, t.url, nil)
 	if err != nil {
-		return err
+		return wrapDialError(err, resp, t.url)
 	}
 	t.conn = conn
 	go t.readPump()
 	return nil
 }
+
+// wrapDialError enriquece el error de gorilla con el estado HTTP y un extracto
+// del cuerpo cuando el handshake falla contra un servidor que responde algo
+// distinto de 101. El cuerpo se acota a 200 bytes: un error suele venir en un
+// JSON corto o un HTML de proxy — más que eso ensucia el log.
+func wrapDialError(err error, resp *http.Response, target string) error {
+	if resp == nil {
+		// Sin respuesta: falló el TCP/TLS antes del HTTP. err ya trae el motivo
+		// (dial timeout, x509 error, connection refused).
+		return fmt.Errorf("ws %s: %w", redactURL(target), err)
+	}
+	defer resp.Body.Close()
+	// http.Response.Header también puede llevar pistas útiles (Server, WWW-Authenticate).
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 200))
+	snippet := strings.TrimSpace(string(body))
+	if snippet == "" {
+		return fmt.Errorf("ws %s: %w (HTTP %d)", redactURL(target), err, resp.StatusCode)
+	}
+	return fmt.Errorf("ws %s: %w (HTTP %d: %s)", redactURL(target), err, resp.StatusCode, snippet)
+}
+
+// redactURL quita fragmentos que podrían contener secretos (token en la query,
+// user info) antes de imprimir la URL. La ruta y el host se dejan porque son
+// justo lo que necesitas para diagnosticar (¿estás dialando el endpoint
+// correcto?).
+func redactURL(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return raw
+	}
+	u.User = nil
+	if q := u.Query(); len(q) > 0 {
+		q.Set("token", "REDACTED")
+		u.RawQuery = q.Encode()
+	}
+	return u.String()
+}
+
 
 func (t *Transport) readPump() {
 	defer close(t.inbox)

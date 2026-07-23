@@ -194,9 +194,26 @@ func (l *Lifecycle) register(ctx context.Context, t comms.Transport) {
 	})
 
 	printers, _ := l.discovery.List(ctx)
+	// Index locally-managed printers so we can annotate each detected printer
+	// with its user-assigned role and enabled flag.
+	managed := make(map[string]ports.ManagedPrinter, len(l.cfg.Printers))
+	for _, mp := range l.cfg.Printers {
+		managed[mp.Name] = mp
+	}
 	dtos := make([]comms.PrinterDTO, 0, len(printers))
 	for _, p := range printers {
-		dtos = append(dtos, comms.PrinterDTO{Name: p.Name, Driver: p.Driver, Type: p.Driver})
+		mp, isManaged := managed[p.Name]
+		// Discovered-but-unmanaged printers default to enabled (matches UI).
+		enabled := true
+		role := ""
+		if isManaged {
+			enabled = mp.Enabled
+			role = string(mp.Role)
+		}
+		dtos = append(dtos, comms.PrinterDTO{
+			Name: p.Name, Driver: p.Driver, Type: p.Driver,
+			Role: role, Enabled: enabled,
+		})
 	}
 	_ = l.send(ctx, t, comms.Capabilities{Type: comms.TypeCapabilities, Devices: []string{"printer"}, Printers: dtos})
 }

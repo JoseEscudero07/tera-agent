@@ -22,6 +22,11 @@ const (
 	DevicePDF    DeviceFormat = "pdf"
 	DevicePNG    DeviceFormat = "png"
 	DeviceRaw    DeviceFormat = "raw"
+	// DeviceGDIRaster son páginas raster empaquetadas para el driver GDI de
+	// Windows (láser/inyección/virtual PDF). El driver decodifica y pinta cada
+	// página vía StretchDIBits; el formato del contenedor lo define el paquete
+	// encoder/raster. No debe verse fuera del par encoder↔driver.
+	DeviceGDIRaster DeviceFormat = "gdi-raster"
 )
 
 // deviceOfSource maps source formats that are already device-native, enabling a

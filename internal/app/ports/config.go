@@ -55,11 +55,27 @@ type Config struct {
 // device capability (that is the ERP-owned PrinterProfile).
 type PrinterRole string
 
+// Lista canónica de roles funcionales. Debe coincidir exactamente con
+// `apps.tera_agent.roles.Rol` del backend Django: los strings viajan por JSON
+// como clave y cualquier divergencia rompe el ruteo por rol.
 const (
-	RoleReceipt PrinterRole = "receipt" // ticket / recibo (POS)
-	RoleKitchen PrinterRole = "kitchen" // comanda de cocina
-	RoleA4      PrinterRole = "a4"      // documento A4 / factura
-	RoleLabel   PrinterRole = "label"   // etiquetas
+	RoleCaja        PrinterRole = "caja"        // recibos de caja, cierre Z, arqueos
+	RoleFacturacion PrinterRole = "facturacion" // tickets 80mm y facturas A4 de venta
+	RoleCocina      PrinterRole = "cocina"      // comandas, delivery, KDS impreso
+	RoleBodega      PrinterRole = "bodega"      // remisiones, órdenes de despacho, ingresos
+	RoleOficina     PrinterRole = "oficina"     // informes internos, listados
+	RoleEtiqueta    PrinterRole = "etiqueta"    // precios, códigos de barra
+)
+
+// PrinterKind is what physical family of printer this is, from the Agent's
+// point of view. It decides which local default profile install (ESC/POS vs
+// PDF/raster) when the Backend hasn't sent one. Empty = thermal (backward
+// compat with configs written before this field existed).
+type PrinterKind string
+
+const (
+	KindThermal PrinterKind = "thermal" // POS 58/80 mm ESC/POS
+	KindPDF     PrinterKind = "pdf"     // láser / inyección / virtual PDF (GDI)
 )
 
 // ManagedPrinter is a discovered printer the user has chosen to manage: whether
@@ -69,12 +85,29 @@ type ManagedPrinter struct {
 	Name    string
 	Role    PrinterRole
 	Enabled bool
+	// Kind marca la familia física (thermal|pdf). Vacío = thermal (compat).
+	Kind PrinterKind
 	// CutFeedDots overrides the paper fed before the cut for this printer. 0 =
 	// use the global default (Config.CutFeedDots) or the built-in default.
 	CutFeedDots int
 	// TopMarginDots overrides how many blank top rows to keep. 0 = use the global
 	// default (Config.TopMarginDots) or the built-in default.
 	TopMarginDots int
+}
+
+// KindOf resolves the declared kind for a printer, or thermal if unmanaged /
+// unset. Helper used by the UI and profile bootstrap so the default doesn't
+// leak in multiple places.
+func (c Config) KindOf(printerID string) PrinterKind {
+	for _, p := range c.Printers {
+		if p.Name == printerID {
+			if p.Kind != "" {
+				return p.Kind
+			}
+			return KindThermal
+		}
+	}
+	return KindThermal
 }
 
 // PrinterTuning resolves the cut calibration for a printer: the per-printer

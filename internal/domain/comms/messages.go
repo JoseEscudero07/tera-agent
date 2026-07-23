@@ -61,6 +61,14 @@ type PrinterDTO struct {
 	Name   string `json:"name"`
 	Driver string `json:"driver"`
 	Type   string `json:"type"`
+	// Role is the local functional role the user assigned to this printer in
+	// the Agent's panel (receipt/kitchen/a4/label). Empty when the printer is
+	// unmanaged or has no role yet. The Backend uses it to suggest routing
+	// (e.g. "cocina") without exposing the OS-level printer name.
+	Role string `json:"role,omitempty"`
+	// Enabled reflects whether the user activated this printer for this agent
+	// in the local panel. Unmanaged printers default to enabled.
+	Enabled bool `json:"enabled"`
 }
 
 type Capabilities struct {

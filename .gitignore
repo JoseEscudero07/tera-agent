@@ -3,7 +3,12 @@
 /dist/
 /tera-agent
 /tera-agent-linux
-/tera-agent.exe
+# Cualquier ejecutable Windows (agente, backups, pdftoppm bundle). El código
+# fuente es .go, así que *.exe nunca es fuente.
+*.exe
+
+# Scratchpad / temporales de desarrollo
+/scratchpad/
 
 # Local config with secrets (Token). Never commit.
 config.json

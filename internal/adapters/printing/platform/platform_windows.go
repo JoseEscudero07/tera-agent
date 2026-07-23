@@ -8,14 +8,19 @@
 package platform
 
 import (
+	"github.com/teraerp/tera-agent/internal/adapters/printing/driver/gdi"
 	spooler "github.com/teraerp/tera-agent/internal/adapters/printing/driver/spooler"
 	"github.com/teraerp/tera-agent/internal/app/ports"
 	dp "github.com/teraerp/tera-agent/internal/domain/printing"
 )
 
-// Drivers returns the platform driver set (spooler RAW).
-func Drivers(log ports.Logger) []dp.Driver {
-	return []dp.Driver{spooler.NewRaw(log)}
+// Drivers returns the platform driver set:
+//   - spooler.NewRaw: térmicas / etiquetas (ESC/POS, ZPL, EPL, raw).
+//   - gdi.New: láser / inyección / virtual PDF, vía GDI + spooler gráfico.
+//
+// El orden en el slice no importa: el resolver elige por Accepts(target).
+func Drivers(log ports.Logger, bin dp.Binarizer) []dp.Driver {
+	return []dp.Driver{spooler.NewRaw(log), gdi.New(log, bin)}
 }
 
 // RawDriver returns the platform raw driver (for the `raw` command).
@@ -26,3 +31,9 @@ func NewDiscovery(log ports.Logger) dp.Discovery { return spooler.NewDiscovery(l
 
 // OSName is the running operating system.
 func OSName() string { return "windows" }
+
+// ProfileNormalizerForOS devuelve el normalizador que este SO necesita: en
+// Windows traduce DevicePDF → DeviceGDIRaster (rasterizar y pintar por GDI)
+// y sube DPI/WidthDots al mínimo raster. La lógica pura vive en normalize.go
+// para poder testearse desde cualquier SO.
+func ProfileNormalizerForOS() ProfileNormalizer { return NormalizeForGDIRaster }

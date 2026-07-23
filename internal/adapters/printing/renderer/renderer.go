@@ -28,7 +28,10 @@ func (p *PDF) Render(ctx context.Context, content []byte, opts dp.RenderOptions)
 	pages, err := p.raster.Rasterize(ctx, content, dp.RasterOptions{
 		WidthDots: opts.WidthDots,
 		DPI:       opts.DPI,
-		Gray:      true,
+		// Gris salvo que el destino pida color (impresoras a color por GDI). El
+		// binarizador del camino térmico convierte a gris igualmente, así que
+		// esto sólo abre la puerta al color donde tiene sentido.
+		Gray: !opts.Color,
 	})
 	if err != nil {
 		return nil, err

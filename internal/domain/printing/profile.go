@@ -26,4 +26,8 @@ type ProfileCache interface {
 	ProfileProvider
 	Set(PrinterProfile)      // upsert one profile
 	SetAll([]PrinterProfile) // full sync
+	// Forget descarta el perfil cacheado de una impresora concreta. La UI lo
+	// usa cuando el usuario cambia el tipo local (thermal↔pdf) para evitar
+	// que ensureProfile respete un perfil ya obsoleto.
+	Forget(printerID string)
 }

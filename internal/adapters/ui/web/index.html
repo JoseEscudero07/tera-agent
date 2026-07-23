@@ -382,7 +382,10 @@ async function loadConfig(){
 }
 
 // Roles: valor interno (config) -> etiqueta visible.
-const ROLES={'':'Sin rol',receipt:'Recibo',kitchen:'Cocina',a4:'A4 / Factura',label:'Etiqueta'};
+const ROLES={'':'Sin rol',caja:'Caja',facturacion:'Facturación',cocina:'Cocina',bodega:'Bodega',oficina:'Oficina',etiqueta:'Etiqueta'};
+// Tipo físico de impresora. thermal = ticketera 58/80mm ESC/POS.
+// pdf = láser / inyección / impresora virtual PDF (se imprime vía GDI en Windows).
+const KINDS={thermal:'Térmica (ESC/POS)',pdf:'Láser / PDF'};
 let PRINTERS=[]; // última lista cargada (para leer estado actual en las acciones)
 // Defaults globales de calibración (para los placeholders); se refrescan en loadStatus.
 const DEFAULTS={cutFeedDots:232,topMarginDots:16};
@@ -395,23 +398,33 @@ function printerRow(p){
   return `<div class="pitem"><span class="dot ${pdot(p.status)}"></span><span class="name">${p.name}</span>${p.default?'<span class="tag">Predeterminada</span>':''}<span class="status">${st}</span></div>`;
 }
 
-// Fila gestionable (Impresoras): activar/desactivar, rol, predeterminada, acciones.
+// Fila gestionable (Impresoras): activar/desactivar, tipo, rol, calibración, acciones.
+// El tipo decide qué controles tienen sentido: la calibración de corte y el
+// botón "Cajón" son sólo para térmicas; en láser/PDF se ocultan para no
+// confundir (y así también evitamos mandar ESC/POS a una láser sin querer).
 function printerRowFull(p){
   const st=P_STATUS[p.status]||'—';
   const enabled=p.enabled!==false;
-  const opts=Object.entries(ROLES).map(([v,l])=>`<option value="${v}"${(p.role||'')===v?' selected':''}>${l}</option>`).join('');
+  const kind=p.kind||'thermal';
+  const isThermal=kind==='thermal';
+  const roleOpts=Object.entries(ROLES).map(([v,l])=>`<option value="${v}"${(p.role||'')===v?' selected':''}>${l}</option>`).join('');
+  const kindOpts=Object.entries(KINDS).map(([v,l])=>`<option value="${v}"${kind===v?' selected':''}>${l}</option>`).join('');
   const n=esc(p.name);
+  const cal=isThermal?`
+    <label class="cal" title="Avance de papel antes del corte, en dots (1mm≈8). Vacío = ${DEFAULTS.cutFeedDots} por defecto.">✂<input type="number" min="0" max="2000" placeholder="${DEFAULTS.cutFeedDots}" value="${p.cutFeedDots||''}" onchange="setCal('${n}','cutFeedDots',this.value)"></label>
+    <label class="cal" title="Margen superior a dejar, en dots. Vacío = ${DEFAULTS.topMarginDots} por defecto.">⬆<input type="number" min="0" placeholder="${DEFAULTS.topMarginDots}" value="${p.topMarginDots||''}" onchange="setCal('${n}','topMarginDots',this.value)"></label>`:'';
+  const drawer=isThermal?`<button class="btn" onclick="openDrawer('${n}')">Cajón</button>`:'';
   return `<div class="prow${enabled?'':' off'}">
     <div class="toggle sm${enabled?' on':''}" title="Activar impresora" onclick="toggleEnabled('${n}')"></div>
     <span class="pname"><span class="dot ${pdot(p.status)}"></span>${p.name}${p.default?'<span class="tag def">Predeterminada</span>':''}</span>
-    <select class="sel" title="Rol" onchange="setRole('${n}',this.value)">${opts}</select>
-    <label class="cal" title="Avance de papel antes del corte, en dots (1mm≈8). Vacío = ${DEFAULTS.cutFeedDots} por defecto.">✂<input type="number" min="0" max="2000" placeholder="${DEFAULTS.cutFeedDots}" value="${p.cutFeedDots||''}" onchange="setCal('${n}','cutFeedDots',this.value)"></label>
-    <label class="cal" title="Margen superior a dejar, en dots. Vacío = ${DEFAULTS.topMarginDots} por defecto.">⬆<input type="number" min="0" placeholder="${DEFAULTS.topMarginDots}" value="${p.topMarginDots||''}" onchange="setCal('${n}','topMarginDots',this.value)"></label>
+    <select class="sel" title="Tipo físico" onchange="setKind('${n}',this.value)">${kindOpts}</select>
+    <select class="sel" title="Rol" onchange="setRole('${n}',this.value)">${roleOpts}</select>
+    ${cal}
     <span class="status muted" style="font-size:12.5px">${st}</span>
     <div class="acts">
       ${p.default?'':`<button class="btn" onclick="setDefault('${n}')">Predeterminar</button>`}
       <button class="btn" onclick="testPrinter('${n}')">Probar</button>
-      <button class="btn" onclick="openDrawer('${n}')">Cajón</button>
+      ${drawer}
       <button class="btn danger" onclick="removePrinter('${n}')">Quitar</button>
     </div>
   </div>`;
@@ -424,14 +437,15 @@ async function loadPrinters(){
 }
 
 // --- Acciones de impresoras ---
-function findP(name){return PRINTERS.find(p=>p.name===name)||{name,role:'',enabled:true,cutFeedDots:0,topMarginDots:0};}
-// Envía SIEMPRE los 4 campos (partiendo del estado actual + los cambios) para no
-// pisar la calibración al togglear activo o cambiar el rol.
+function findP(name){return PRINTERS.find(p=>p.name===name)||{name,role:'',kind:'thermal',enabled:true,cutFeedDots:0,topMarginDots:0};}
+// Envía SIEMPRE los 5 campos (partiendo del estado actual + los cambios) para
+// no pisar calibración/tipo/rol al togglear activo o cambiar cualquier otro.
 async function applyManage(name,changes){
   const p=findP(name);
   const payload={
     name,
     role:p.role||'',
+    kind:p.kind||'thermal',
     enabled:p.enabled!==false,
     cutFeedDots:p.cutFeedDots||0,
     topMarginDots:p.topMarginDots||0,
@@ -442,6 +456,7 @@ async function applyManage(name,changes){
 }
 function toggleEnabled(name){const p=findP(name);applyManage(name,{enabled:!(p.enabled!==false)});}
 function setRole(name,role){applyManage(name,{role});toast('ok','Rol actualizado',`${name}: ${ROLES[role]||role}`);}
+function setKind(name,kind){applyManage(name,{kind});toast('ok','Tipo actualizado',`${name}: ${KINDS[kind]||kind}`);}
 function setCal(name,field,value){
   const v=Math.max(0,parseInt(value,10)||0);
   applyManage(name,{[field]:v});

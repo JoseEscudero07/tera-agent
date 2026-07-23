@@ -314,8 +314,14 @@ func buildUIServer(app *di.App) *ui.Server {
 		Version:      di.AgentVersion,
 		DataDir:      app.DataDir,
 		Log:          app.Log,
-		SaveConfig:   app.SaveConfig,
-		ApplyTuning:  func(c ports.Config) { app.Engine.SetTuning(c.PrinterTuning) },
+		SaveConfig: app.SaveConfig,
+		ApplyTuning: func(c ports.Config) {
+			app.Engine.SetTuning(c.PrinterTuning)
+			// El resolver de roles vive junto al motor y también depende del
+			// snapshot de impresoras. Refrescarlo en el mismo callback evita
+			// tener que reiniciar el Agent tras cambiar un rol en el panel.
+			app.Roles.Update(c.Printers, c.DefaultPrinter)
+		},
 		OnRegistered: restartSelf,
 	})
 }

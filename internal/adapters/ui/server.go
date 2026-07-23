@@ -90,8 +90,11 @@ func (s *Server) Run(ctx context.Context, addr string) error {
 
 func (s *Server) status(w http.ResponseWriter, _ *http.Request) {
 	id, ts := s.d.Info.Snapshot()
+	// Un equipo se considera registrado solo si tiene Token *y* URL del servidor:
+	// un config con token viejo pero sin URL (o vice versa) muestra la pantalla
+	// de registro en lugar de un panel vacío.
 	writeJSON(w, map[string]any{
-		"registered": s.d.Cfg.Token != "",
+		"registered": s.d.Cfg.Token != "" && s.d.Cfg.BackendURL != "",
 		"state":      string(s.d.Machine.Current()),
 		"empresa":    id.Empresa,
 		"sede":       id.Sucursal,
@@ -143,6 +146,13 @@ func (s *Server) printers(w http.ResponseWriter, r *http.Request) {
 			enabled = mp.Enabled
 			role = string(mp.Role)
 		}
+		kind := ""
+		if managed {
+			kind = string(mp.Kind)
+		}
+		if kind == "" {
+			kind = string(ports.KindThermal)
+		}
 		out = append(out, map[string]any{
 			"name":          p.Name,
 			"status":        string(p.Status),
@@ -150,6 +160,7 @@ func (s *Server) printers(w http.ResponseWriter, r *http.Request) {
 			"managed":       managed,
 			"enabled":       enabled,
 			"role":          role,
+			"kind":          kind,
 			"cutFeedDots":   mp.CutFeedDots,   // 0 = usar default
 			"topMarginDots": mp.TopMarginDots, // 0 = usar default
 		})
@@ -157,13 +168,14 @@ func (s *Server) printers(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, out)
 }
 
-// printersManage upserts one printer's managed state (enabled, role and the
-// per-printer cut calibration).
+// printersManage upserts one printer's managed state (enabled, role, kind and
+// the per-printer cut calibration).
 func (s *Server) printersManage(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Name          string `json:"name"`
 		Role          string `json:"role"`
 		Enabled       bool   `json:"enabled"`
+		Kind          string `json:"kind"`
 		CutFeedDots   int    `json:"cutFeedDots"`
 		TopMarginDots int    `json:"topMarginDots"`
 	}
@@ -181,8 +193,22 @@ func (s *Server) printersManage(w http.ResponseWriter, r *http.Request) {
 	if body.TopMarginDots < 0 {
 		body.TopMarginDots = 0
 	}
+	kind := ports.PrinterKind(body.Kind)
+	// Rechazar valores desconocidos y caer al default (thermal) evita meter
+	// basura al YAML si el panel manda algo inesperado.
+	if kind != ports.KindThermal && kind != ports.KindPDF {
+		kind = ports.KindThermal
+	}
+	// Al cambiar el tipo debemos limpiar el perfil cacheado: el que había
+	// venía del kind anterior y ensureProfile lo respetaría en vez de recrearlo.
+	// Si el Backend nos envía un perfil real, sobrescribe el nuestro en el
+	// siguiente sync (ver lifecycle.printers).
+	if prev, ok := findManaged(s.d.Cfg.Printers, body.Name); ok && prev.Kind != kind {
+		s.d.Profiles.Forget(body.Name)
+	}
 	s.d.Cfg.Printers = upsertManaged(s.d.Cfg.Printers, ports.ManagedPrinter{
 		Name: body.Name, Role: ports.PrinterRole(body.Role), Enabled: body.Enabled,
+		Kind:        kind,
 		CutFeedDots: body.CutFeedDots, TopMarginDots: body.TopMarginDots,
 	})
 	if err := s.persist(); err != nil {
@@ -280,22 +306,29 @@ func (s *Server) testPrint(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{"ok": true, "printer": printer})
 }
 
-// ensureProfile returns the printer's profile, installing a default ESC/POS
-// (thermal) one only if the Backend has not provided a profile yet — so it never
-// clobbers a real profile (e.g. a PDF/laser printer).
+// ensureProfile returns the printer's profile. Si el Backend no ha enviado
+// perfil todavía, instala uno por defecto según el tipo declarado por el
+// usuario en el panel (thermal → ESC/POS, pdf → GDI raster). Nunca sobrescribe
+// un perfil real que ya venga del Backend.
 func (s *Server) ensureProfile(printer string) dp.PrinterProfile {
 	if p, err := s.d.Profiles.Profile(printer); err == nil && len(p.NativeFormats) > 0 {
 		return p
 	}
-	s.escposProfile(printer)
+	switch s.d.Cfg.KindOf(printer) {
+	case ports.KindPDF:
+		s.pdfProfile(printer)
+	default:
+		s.escposProfile(printer)
+	}
 	p, _ := s.d.Profiles.Profile(printer)
 	return p
 }
 
-// profileIsPDF reports whether the printer consumes PDF natively (laser/inkjet).
+// profileIsPDF reports whether the printer consumes PDF natively (láser /
+// inyección / virtual PDF). Coincide con lo que instala pdfProfile localmente.
 func profileIsPDF(p dp.PrinterProfile) bool {
 	for _, f := range p.NativeFormats {
-		if f == dp.DevicePDF {
+		if f == dp.DevicePDF || f == dp.DeviceGDIRaster {
 			return true
 		}
 	}
@@ -308,6 +341,29 @@ func (s *Server) escposProfile(printer string) {
 	s.d.Profiles.Set(dp.PrinterProfile{
 		PrinterID: printer, NativeFormats: []dp.DeviceFormat{dp.DeviceESCPOS},
 		WidthDots: 576, DPI: 203, SupportsCut: true, SupportsDrawer: true,
+	})
+}
+
+// pdfProfile instala un perfil por defecto para impresoras láser / inyección /
+// virtuales PDF. El único formato de dispositivo soportado en Windows para
+// esta familia es DeviceGDIRaster (rasterizar PDF y pintar por GDI).
+//
+// 600 DPI = calidad de facto de las láser (casi todas son nativas a 600; los
+// "1200 dpi" del marketing suelen ser REt interpolado). Ancho A4 a 600 dpi
+// ≈ 4960 dots. Poppler ajusta el alto conservando la relación real de la
+// página (Letter, A5, A3 salen bien también).
+//
+// Se probó 1200 dpi y el DIB (9920 wide) supera el límite interno de ancho
+// de origen que aceptan varios drivers HP y PCL (errno=158 al StretchDIBits).
+// 600 imprime nítido en todos los drivers Windows probados y es el balance
+// entre calidad visible y compatibilidad. Un ERP que catalogue una impresora
+// premium a 1200 dpi puede subir el DPI desde el catálogo del Backend.
+func (s *Server) pdfProfile(printer string) {
+	s.d.Profiles.Set(dp.PrinterProfile{
+		PrinterID: printer, NativeFormats: []dp.DeviceFormat{dp.DeviceGDIRaster},
+		WidthDots: 4960, DPI: 600,
+		SupportsCut:    false,
+		SupportsDrawer: false,
 	})
 }
 
@@ -427,10 +483,16 @@ func (s *Server) register(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, "token vacío")
 		return
 	}
-	s.d.Cfg.Token = body.Token
+	// La URL puede llegar en el body o venir ya en el config; exigimos ambas para
+	// no dejar el agente en un estado a medio registrar (token sin destino).
 	if body.URL != "" {
 		s.d.Cfg.BackendURL = body.URL
 	}
+	if s.d.Cfg.BackendURL == "" {
+		writeErr(w, "falta la URL del servidor")
+		return
+	}
+	s.d.Cfg.Token = body.Token
 	if s.d.SaveConfig != nil {
 		if err := s.d.SaveConfig(s.d.Cfg); err != nil {
 			writeErr(w, err.Error())

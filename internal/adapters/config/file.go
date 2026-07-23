@@ -20,6 +20,7 @@ type wireManagedPrinter struct {
 	Name          string `yaml:"name"`
 	Role          string `yaml:"role"`
 	Enabled       bool   `yaml:"enabled"`
+	Kind          string `yaml:"kind,omitempty"`
 	CutFeedDots   int    `yaml:"cut_feed_dots"`
 	TopMarginDots int    `yaml:"top_margin_dots"`
 }
@@ -76,6 +77,7 @@ func (f *fileStore) Load() (ports.Config, error) {
 	for _, p := range w.Printer.Managed {
 		printers = append(printers, ports.ManagedPrinter{
 			Name: p.Name, Role: ports.PrinterRole(p.Role), Enabled: p.Enabled,
+			Kind:        ports.PrinterKind(p.Kind),
 			CutFeedDots: p.CutFeedDots, TopMarginDots: p.TopMarginDots,
 		})
 	}
@@ -112,6 +114,7 @@ func (f *fileStore) Save(c ports.Config) error {
 	for _, p := range c.Printers {
 		w.Printer.Managed = append(w.Printer.Managed, wireManagedPrinter{
 			Name: p.Name, Role: string(p.Role), Enabled: p.Enabled,
+			Kind:        string(p.Kind),
 			CutFeedDots: p.CutFeedDots, TopMarginDots: p.TopMarginDots,
 		})
 	}

@@ -103,8 +103,9 @@ func TestSaveLoad_ManagedPrintersAndPreservedFields(t *testing.T) {
 		CutFeedDots:    232,
 		TopMarginDots:  16,
 		Printers: []ports.ManagedPrinter{
-			{Name: "POS80", Role: ports.RoleReceipt, Enabled: true, CutFeedDots: 248, TopMarginDots: 8},
-			{Name: "Kitchen", Role: ports.RoleKitchen, Enabled: false},
+			{Name: "POS80", Role: ports.RoleFacturacion, Enabled: true, Kind: ports.KindThermal, CutFeedDots: 248, TopMarginDots: 8},
+			{Name: "Kitchen", Role: ports.RoleCocina, Enabled: false, Kind: ports.KindThermal},
+			{Name: "HP LaserJet", Role: ports.RoleFacturacion, Enabled: true, Kind: ports.KindPDF},
 		},
 		// Fields that Save used to drop silently.
 		DataDir:            "/var/lib/tera",
@@ -121,11 +122,16 @@ func TestSaveLoad_ManagedPrintersAndPreservedFields(t *testing.T) {
 		t.Fatalf("Load error: %v", err)
 	}
 
-	if len(got.Printers) != 2 {
-		t.Fatalf("Printers len = %d, want 2 (%+v)", len(got.Printers), got.Printers)
+	if len(got.Printers) != 3 {
+		t.Fatalf("Printers len = %d, want 3 (%+v)", len(got.Printers), got.Printers)
 	}
-	if got.Printers[0] != orig.Printers[0] || got.Printers[1] != orig.Printers[1] {
-		t.Errorf("managed printers mismatch: %+v vs %+v", got.Printers, orig.Printers)
+	for i := range orig.Printers {
+		if got.Printers[i] != orig.Printers[i] {
+			t.Errorf("managed printers[%d] mismatch: %+v vs %+v", i, got.Printers[i], orig.Printers[i])
+		}
+	}
+	if got.Printers[2].Kind != ports.KindPDF {
+		t.Errorf("HP LaserJet Kind = %q, want %q", got.Printers[2].Kind, ports.KindPDF)
 	}
 	if got.DataDir != orig.DataDir {
 		t.Errorf("DataDir not preserved: %q", got.DataDir)

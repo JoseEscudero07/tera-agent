@@ -2,6 +2,7 @@ package print
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	dp "github.com/teraerp/tera-agent/internal/domain/printing"
@@ -85,5 +86,70 @@ func TestResolver_NoPipeline(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("expected error resolving PDF for a ZPL-only printer, got nil")
+	}
+}
+
+// Los tres tests siguientes verifican que Resolve devuelve un mensaje útil a
+// la UI: identifica el formato del origen, la impresora y por qué no encaja.
+// El texto exacto puede cambiar; lo que se verifica son las señales concretas
+// que el usuario debe leer en el toast.
+
+func TestResolver_ErrorMentionsPrinterAndFormat(t *testing.T) {
+	drv := fakeDriver{accepts: dp.DeviceZPL}
+	r := NewResolver(nil, nil, []dp.Driver{drv})
+
+	_, err := r.Resolve(dp.FormatPDF, dp.PrinterProfile{
+		PrinterID:     "Zebra-1",
+		NativeFormats: []dp.DeviceFormat{dp.DeviceZPL},
+	})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "Zebra-1") || !strings.Contains(msg, string(dp.FormatPDF)) {
+		t.Fatalf("error should mention printer and source format, got: %q", msg)
+	}
+}
+
+func TestResolver_ErrorFlagsMissingDriver(t *testing.T) {
+	// El perfil pide GDIRaster pero la plataforma no tiene driver para él.
+	r := NewResolver(nil, nil, nil)
+	_, err := r.Resolve(dp.FormatPDF, dp.PrinterProfile{
+		PrinterID:     "HP",
+		NativeFormats: []dp.DeviceFormat{dp.DeviceGDIRaster},
+	})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "driver") {
+		t.Fatalf("error should explain missing driver, got: %q", err.Error())
+	}
+}
+
+func TestResolver_ErrorFlagsMissingEncoder(t *testing.T) {
+	// Hay driver, pero ningún encoder produce ese target.
+	drv := fakeDriver{accepts: dp.DeviceGDIRaster}
+	r := NewResolver(nil, nil, []dp.Driver{drv})
+	_, err := r.Resolve(dp.FormatPDF, dp.PrinterProfile{
+		PrinterID:     "HP",
+		NativeFormats: []dp.DeviceFormat{dp.DeviceGDIRaster},
+	})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "encoder") {
+		t.Fatalf("error should explain missing encoder, got: %q", err.Error())
+	}
+}
+
+func TestResolver_EmptyNativeFormats(t *testing.T) {
+	_, err := NewResolver(nil, nil, nil).Resolve(dp.FormatPDF, dp.PrinterProfile{
+		PrinterID: "X",
+	})
+	if err == nil {
+		t.Fatal("expected error for profile without native formats")
+	}
+	if !strings.Contains(err.Error(), "X") {
+		t.Fatalf("error should mention the printer, got: %q", err.Error())
 	}
 }

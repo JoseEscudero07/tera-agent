@@ -45,3 +45,9 @@ func (c *memoryCache) SetAll(ps []dp.PrinterProfile) {
 		c.m[p.PrinterID] = p
 	}
 }
+
+func (c *memoryCache) Forget(printerID string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	delete(c.m, printerID)
+}

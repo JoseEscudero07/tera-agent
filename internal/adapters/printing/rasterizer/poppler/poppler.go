@@ -7,18 +7,32 @@ package poppler
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"image"
 	"image/png"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
+	"sync"
+	"time"
 
 	"github.com/teraerp/tera-agent/internal/app/ports"
 	dp "github.com/teraerp/tera-agent/internal/domain/printing"
 )
+
+// pdftoppmTimeout limita cuánto puede tardar la rasterización de un job. Un PDF
+// patológico o un pdftoppm colgado no debe dejar la petición HTTP recargando
+// indefinidamente: se cancela el proceso hijo y la UI recibe el error.
+//
+// 90s deja margen para PDFs multi-página a 1200 DPI (la calidad máxima que el
+// panel elige para láser). Un A4 a esa densidad se rasteriza en 3-5s por
+// página en un equipo típico; 90s cubre documentos de ~20 páginas o CPUs
+// lentas sin cortar trabajos legítimos.
+const pdftoppmTimeout = 90 * time.Second
 
 // Rasterizer converts PDF bytes into raster pages via pdftoppm.
 type Rasterizer struct{ log ports.Logger }
@@ -44,7 +58,10 @@ func (r *Rasterizer) Rasterize(ctx context.Context, pdf []byte, opts dp.RasterOp
 		return nil, err
 	}
 
-	args := []string{"-png", "-gray"}
+	args := []string{"-png"}
+	if opts.Gray {
+		args = append(args, "-gray")
+	}
 	switch {
 	case opts.WidthDots > 0:
 		// Integer scaling to the native dot width keeps text and code modules crisp.
@@ -55,12 +72,15 @@ func (r *Rasterizer) Rasterize(ctx context.Context, pdf []byte, opts dp.RasterOp
 	prefix := filepath.Join(tmp, "page")
 	args = append(args, in, prefix)
 
-	cmd := exec.CommandContext(ctx, "pdftoppm", args...)
+	runCtx, cancel := context.WithTimeout(ctx, pdftoppmTimeout)
+	defer cancel()
+	bin := resolvePdftoppm(r.log)
+	cmd := exec.CommandContext(runCtx, bin, args...)
 	cmd.Env = append(os.Environ(), "LC_ALL=C")
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		return nil, fmt.Errorf("poppler: pdftoppm: %w: %s", err, stderr.String())
+		return nil, fmt.Errorf("poppler: pdftoppm (%s): %w: %s", bin, err, stderr.String())
 	}
 
 	files, err := filepath.Glob(prefix + "*.png")
@@ -90,3 +110,75 @@ func (r *Rasterizer) Rasterize(ctx context.Context, pdf []byte, opts dp.RasterOp
 }
 
 var _ dp.Rasterizer = (*Rasterizer)(nil)
+
+// resolvePdftoppm finds the pdftoppm binary. Order:
+//  1. TERA_PDFTOPPM env var (absolute path). Useful for tests and admins.
+//  2. Same directory as the running executable — allows shipping pdftoppm.exe
+//     next to tera-agent.exe on Windows without editing PATH (services run as
+//     LocalSystem and don't see per-user PATH).
+//  3. A ./poppler/bin/ subfolder next to the executable — convenient for the
+//     Windows installer, which drops the poppler bundle there.
+//  4. exec.LookPath sobre el PATH del proceso. En Windows, cuando LookPath
+//     resuelve por el CWD, Go 1.19+ marca ErrDot y devuelve la ruta igual:
+//     la aceptamos convertida a absoluta, así funciona aunque el usuario
+//     lance el Agent desde la carpeta donde vive pdftoppm.exe.
+//
+// Cached: printing on the hot path calls this per page. Recompute is cheap
+// pero innecesario, y ensucia el log cuando ya hemos elegido una ruta.
+func resolvePdftoppm(log ports.Logger) string {
+	pdftoppmOnce.Do(func() {
+		pdftoppmPath = findPdftoppm()
+		// Una sola línea al primer uso: hace trivial diagnosticar futuros
+		// "no lo encuentra" (¿está el .exe junto al Agent? ¿cayó al PATH?).
+		if log != nil {
+			log.Info("pdftoppm resolved", "path", pdftoppmPath)
+		}
+	})
+	return pdftoppmPath
+}
+
+var (
+	pdftoppmOnce sync.Once
+	pdftoppmPath string
+)
+
+func findPdftoppm() string {
+	bin := "pdftoppm"
+	if runtime.GOOS == "windows" {
+		bin = "pdftoppm.exe"
+	}
+
+	if p := os.Getenv("TERA_PDFTOPPM"); p != "" {
+		if _, err := os.Stat(p); err == nil {
+			return p
+		}
+	}
+
+	if exe, err := os.Executable(); err == nil {
+		dir := filepath.Dir(exe)
+		candidates := []string{
+			filepath.Join(dir, bin),
+			filepath.Join(dir, "poppler", "bin", bin),
+			filepath.Join(dir, "bin", bin),
+		}
+		for _, c := range candidates {
+			if _, err := os.Stat(c); err == nil {
+				return c
+			}
+		}
+	}
+
+	// PATH del proceso. Aceptamos ErrDot (resolución vía CWD) porque el
+	// nombre "pdftoppm" no es ambiguo: el usuario lo instaló a propósito y
+	// que el binario esté en el mismo directorio desde el que se lanzó el
+	// Agent es un caso legítimo. Convertimos a ruta absoluta para que
+	// exec.CommandContext no vuelva a chocar con la misma protección.
+	if p, err := exec.LookPath(bin); p != "" && (err == nil || errors.Is(err, exec.ErrDot)) {
+		if abs, aerr := filepath.Abs(p); aerr == nil {
+			return abs
+		}
+		return p
+	}
+
+	return bin
+}

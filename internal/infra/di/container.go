@@ -15,6 +15,7 @@ import (
 	"github.com/teraerp/tera-agent/internal/adapters/printing/binarizer"
 	driverfile "github.com/teraerp/tera-agent/internal/adapters/printing/driver/file"
 	"github.com/teraerp/tera-agent/internal/adapters/printing/encoder/escpos"
+	encraster "github.com/teraerp/tera-agent/internal/adapters/printing/encoder/raster"
 	"github.com/teraerp/tera-agent/internal/adapters/printing/platform"
 	"github.com/teraerp/tera-agent/internal/adapters/printing/profile"
 	"github.com/teraerp/tera-agent/internal/adapters/printing/rasterizer/poppler"
@@ -39,6 +40,9 @@ type App struct {
 	Profiles     dp.ProfileCache
 	Engine       *appprint.Engine
 	Discovery    dp.Discovery
+	// Roles resuelve `role → printer` para jobs automáticos del backend que
+	// llegan sin printer_id. La UI lo refresca al cambiar impresoras.
+	Roles *appprint.RoleResolver
 	// LocalMode is true when no backend URL is configured.
 	LocalMode bool
 	// HTTPAddr/HTTPToken configure the optional local HTTP print service.
@@ -86,13 +90,16 @@ func Build(configPath string) (*App, error) {
 	}
 
 	disc := platform.NewDiscovery(log)
-	engine, profiles := newEngine(log, platform.Drivers(log), 0)
+	bin := newBinarizer(0)
+	engine, profiles := newEngine(log, platform.Drivers(log, bin), bin)
 	// Per-printer cut calibration from config (feed before cut, top margin), so a
 	// client can tune the cut per printer without recompiling.
 	engine.SetTuning(cfg.PrinterTuning)
 
+	roles := appprint.NewRoleResolver(cfg.Printers, cfg.DefaultPrinter)
+
 	disp := dispatcher.New(log)
-	disp.Register(job.KindPrint, appprint.NewJobHandler(engine))
+	disp.Register(job.KindPrint, appprint.NewJobHandler(engine, roles))
 
 	var tlsCfg *tls.Config
 	if cfg.InsecureSkipVerify {
@@ -115,6 +122,7 @@ func Build(configPath string) (*App, error) {
 		Profiles:     profiles,
 		Engine:       engine,
 		Discovery:    disc,
+		Roles:        roles,
 		LocalMode:    isLocal,
 		HTTPAddr:     cfg.HTTPAddr,
 		HTTPToken:    cfg.HTTPToken,
@@ -143,11 +151,12 @@ func dataDir(cfg ports.Config) string {
 // BuildPrinting wires the print engine, profile cache and discovery for the CLI
 // print/printers/raw/text commands (no backend needed).
 func BuildPrinting(log ports.Logger, opts PrintOptions) (*appprint.Engine, dp.ProfileCache, dp.Discovery) {
-	drivers := platform.Drivers(log)
+	bin := newBinarizer(densityBias(opts.Density))
+	drivers := platform.Drivers(log, bin)
 	if opts.OutFile != "" {
 		drivers = []dp.Driver{driverfile.New(opts.OutFile, log)}
 	}
-	engine, profiles := newEngine(log, drivers, densityBias(opts.Density))
+	engine, profiles := newEngine(log, drivers, bin)
 	return engine, profiles, platform.NewDiscovery(log)
 }
 
@@ -157,14 +166,19 @@ func RawDriver(log ports.Logger) dp.Driver { return platform.RawDriver(log) }
 // OSName returns the running operating system name.
 func OSName() string { return platform.OSName() }
 
-// newEngine assembles renderers, encoders and the resolver over the given drivers.
-func newEngine(log ports.Logger, drivers []dp.Driver, bias int) (*appprint.Engine, dp.ProfileCache) {
-	var bin dp.Binarizer
+// newBinarizer builds the 1-bpp strategy from a density bias (0 = default Otsu).
+// Shared by the ESC/POS raster encoder and the Windows GDI driver, so both
+// binarize identically.
+func newBinarizer(bias int) dp.Binarizer {
 	if bias == 0 {
-		bin = binarizer.NewOtsu()
-	} else {
-		bin = binarizer.NewOtsuBias(bias)
+		return binarizer.NewOtsu()
 	}
+	return binarizer.NewOtsuBias(bias)
+}
+
+// newEngine assembles renderers, encoders and the resolver over the given
+// drivers. bin is the shared binarizer (also injected into the drivers).
+func newEngine(log ports.Logger, drivers []dp.Driver, bin dp.Binarizer) (*appprint.Engine, dp.ProfileCache) {
 	raster := poppler.New(log)
 
 	renderers := []dp.Renderer{
@@ -175,9 +189,17 @@ func newEngine(log ports.Logger, drivers []dp.Driver, bias int) (*appprint.Engin
 	encoders := []dp.Encoder{
 		escpos.NewRaster(bin),
 		escpos.NewText(),
+		// raster.NewMultiPNG empaqueta páginas raster para el driver GDI de
+		// Windows. En Linux/macOS existe el encoder pero el driver GDI es un
+		// stub que rechaza todo, así que el resolver no lo elige nunca allí.
+		encraster.NewMultiPNG(),
 	}
 
-	profiles := profile.NewMemoryCache()
+	// El cache envuelve el memoryCache con normalización específica de plataforma:
+	// en Windows traduce DevicePDF→DeviceGDIRaster para que perfiles del Backend
+	// pensados para "PDF nativo" (láser/inyección) encajen en el driver GDI. En
+	// Linux/mac ProfileNormalizerForOS devuelve nil y el wrapping no aplica.
+	profiles := platform.NormalizingProfileCache(profile.NewMemoryCache(), platform.ProfileNormalizerForOS())
 	engine := appprint.NewEngine(appprint.NewResolver(renderers, encoders, drivers), profiles, log)
 	return engine, profiles
 }
