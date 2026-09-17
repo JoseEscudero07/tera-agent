@@ -169,10 +169,10 @@ up="$("$vm" run "& powershell -NoProfile -ExecutionPolicy Bypass -File \\\\host.
 echo "  $(echo "$up" | grep -E '^UPGRADED|rror' | paste -sd' ' -)"
 want_svc=False; want_run=True
 [[ "$mode" == service ]] && { want_svc=True; want_run=False; }
-if grep -q "^UPGRADED servicio=$want_svc autoarranque=$want_run token=True" <<<"$up"; then
-  ok "sigue en modo $mode y conserva el registro"
+if grep -q "^UPGRADED servicio=$want_svc autoarranque=$want_run config=True" <<<"$up"; then
+  ok "sigue en modo $mode y conserva el config (URL y Token)"
 else
-  fail "la actualización cambió el modo o perdió el registro: $up"
+  fail "la actualización cambió el modo o tocó el config: $up"
 fi
 
 step "Resultado"
