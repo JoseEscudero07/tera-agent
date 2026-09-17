@@ -44,6 +44,13 @@ func (c *normalizingCache) Profile(id string) (dp.PrinterProfile, error) {
 	return c.normalize(p), nil
 }
 
+// ProfileOr normaliza también el respaldo: en Windows, el perfil local por defecto
+// de una láser tiene que salir por el mismo modo vectorial/imagen que el del ERP,
+// o "Probar" no reflejaría cómo se imprime de verdad.
+func (c *normalizingCache) ProfileOr(id string, fallback dp.PrinterProfile) dp.PrinterProfile {
+	return c.normalize(c.inner.ProfileOr(id, fallback))
+}
+
 func (c *normalizingCache) Set(p dp.PrinterProfile)       { c.inner.Set(p) }
 func (c *normalizingCache) SetAll(ps []dp.PrinterProfile) { c.inner.SetAll(ps) }
 func (c *normalizingCache) Forget(id string)              { c.inner.Forget(id) }

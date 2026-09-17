@@ -42,6 +42,11 @@ Campos:
 | `cut` | bool | true | Corte al final |
 | `drawer` | bool | false | Abrir cajón |
 
+> **Perfil de la impresora**: si la impresora ya tiene perfil (el que envió el
+> ERP), el trabajo se imprime con ese perfil y `paper` / `width` se ignoran. Solo
+> cuando no hay perfil se usa uno ESC/POS construido con esos campos, válido para
+> esa petición: no se guarda ni afecta a otros trabajos.
+
 Respuestas: `200 {"status":"printed","printer":"..."}`, `400` (petición inválida),
 `401` (token), `502 {"error":{"code":"print_failed","message":"..."}}`.
 

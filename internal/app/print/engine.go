@@ -38,13 +38,19 @@ func (e *Engine) SetTuning(fn func(printerID string) (cutFeedDots, topMarginDots
 	e.mu.Unlock()
 }
 
-// Print resolves and executes the pipeline for a job.
+// Print resolves the printer's cached profile and executes the job with it.
 func (e *Engine) Print(ctx context.Context, job dp.PrintJob) error {
 	profile, err := e.profiles.Profile(job.PrinterID)
 	if err != nil {
 		return err
 	}
+	return e.PrintWithProfile(ctx, job, profile)
+}
 
+// PrintWithProfile ejecuta job con un perfil explícito, sin leer ni escribir la
+// caché de perfiles. Lo usan las acciones locales (probar, cajón, POST /print),
+// que resuelven el perfil con ProfileOr para no pisar el que envió el Backend.
+func (e *Engine) PrintWithProfile(ctx context.Context, job dp.PrintJob, profile dp.PrinterProfile) error {
 	pipe, err := e.resolver.Resolve(job.Format, profile)
 	if err != nil {
 		return err

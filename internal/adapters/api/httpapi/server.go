@@ -23,17 +23,17 @@ const maxBody = 32 << 20 // 32 MiB
 // Server exposes /health, /printers and /print over HTTP.
 type Server struct {
 	engine   *appprint.Engine
-	profiles dp.ProfileCache
+	profiles dp.FallbackProfileProvider // solo lectura: nunca escribe la caché
 	disc     dp.Discovery
 	log      ports.Logger
 	token    string
 
-	mu sync.Mutex // serializes profile.Set + Print (printers are sequential)
+	mu sync.Mutex // serializes prints (printers are sequential)
 }
 
 // New builds the HTTP print service. If token is non-empty, requests must carry
 // "Authorization: Bearer <token>".
-func New(engine *appprint.Engine, profiles dp.ProfileCache, disc dp.Discovery, log ports.Logger, token string) *Server {
+func New(engine *appprint.Engine, profiles dp.FallbackProfileProvider, disc dp.Discovery, log ports.Logger, token string) *Server {
 	return &Server{engine: engine, profiles: profiles, disc: disc, log: log, token: token}
 }
 
@@ -139,8 +139,11 @@ func (s *Server) handlePrint(w http.ResponseWriter, r *http.Request) {
 		format = dp.FormatPDF
 	}
 
-	s.mu.Lock()
-	s.profiles.Set(dp.PrinterProfile{
+	// paper/width solo describen el perfil de respaldo: si la impresora ya tiene
+	// perfil (el del Backend), manda ese. Antes se instalaba este ESC/POS en la
+	// caché compartida antes de cada trabajo, y una láser pasaba a recibir ESC/POS
+	// crudo también en los trabajos del ERP.
+	profile := s.profiles.ProfileOr(req.Printer, dp.PrinterProfile{
 		PrinterID:      req.Printer,
 		NativeFormats:  []dp.DeviceFormat{dp.DeviceESCPOS},
 		WidthDots:      width,
@@ -148,12 +151,14 @@ func (s *Server) handlePrint(w http.ResponseWriter, r *http.Request) {
 		SupportsCut:    true,
 		SupportsDrawer: true,
 	})
-	err = s.engine.Print(r.Context(), dp.PrintJob{
+
+	s.mu.Lock()
+	err = s.engine.PrintWithProfile(r.Context(), dp.PrintJob{
 		PrinterID: req.Printer,
 		Format:    format,
 		Content:   req.Content,
 		Options:   dp.Options{Copies: 1, Cut: cut, OpenDrawer: req.Drawer},
-	})
+	}, profile)
 	s.mu.Unlock()
 
 	if err != nil {

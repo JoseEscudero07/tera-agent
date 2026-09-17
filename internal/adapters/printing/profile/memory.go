@@ -31,6 +31,17 @@ func (c *memoryCache) Profile(printerID string) (dp.PrinterProfile, error) {
 	return p, nil
 }
 
+func (c *memoryCache) ProfileOr(printerID string, fallback dp.PrinterProfile) dp.PrinterProfile {
+	c.mu.RLock()
+	p, ok := c.m[printerID]
+	c.mu.RUnlock()
+	if ok && len(p.NativeFormats) > 0 {
+		return p
+	}
+	fallback.PrinterID = printerID
+	return fallback
+}
+
 func (c *memoryCache) Set(p dp.PrinterProfile) {
 	c.mu.Lock()
 	defer c.mu.Unlock()

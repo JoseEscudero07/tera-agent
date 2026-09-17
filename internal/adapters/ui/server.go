@@ -32,11 +32,13 @@ var testPagePDF []byte
 
 // Deps are the collaborators the UI reads from / acts on.
 type Deps struct {
-	Machine    *agent.Machine
-	Info       *agent.Info
-	Discovery  dp.Discovery
-	Engine     *appprint.Engine
-	Profiles   dp.ProfileCache
+	Machine   *agent.Machine
+	Info      *agent.Info
+	Discovery dp.Discovery
+	Engine    *appprint.Engine
+	// Profiles es de solo lectura a propósito: el panel nunca escribe la caché de
+	// perfiles, que solo guarda los del Backend (ver localProfile).
+	Profiles   dp.FallbackProfileProvider
 	Cfg        ports.Config
 	Version    string
 	DataDir    string
@@ -232,19 +234,11 @@ func (s *Server) printersManage(w http.ResponseWriter, r *http.Request) {
 	if ports.PageMode(body.PageMode) == ports.PageModeImage {
 		pageMode = ports.PageModeImage
 	}
-	// Al cambiar el tipo debemos limpiar el perfil cacheado: el que había
-	// venía del kind anterior y ensureProfile lo respetaría en vez de recrearlo.
-	// Si el Backend nos envía un perfil real, sobrescribe el nuestro en el
-	// siguiente sync (ver lifecycle.printers).
-	//
-	// Cambiar el DPI ya NO olvida el perfil: olvidarlo tiraba también el perfil
-	// que envió el Backend y los trabajos del ERP fallaban con "no profile" hasta
-	// la siguiente sincronización. Hoy el DPI no altera el perfil ejecutable
-	// (NormalizeForGDIRaster fija el mínimo raster), así que no hay nada que
-	// reconstruir.
-	if prev, ok := findManaged(s.d.Cfg.Printers, body.Name); ok && prev.Kind != kind {
-		s.d.Profiles.Forget(body.Name)
-	}
+	// Ni el tipo ni el DPI olvidan el perfil cacheado. La caché solo guarda
+	// perfiles del Backend —el perfil por defecto de las acciones locales es
+	// efímero (localProfile)—, así que olvidarlo solo tiraba el del ERP y sus
+	// trabajos fallaban con "no profile" hasta la siguiente sincronización. El
+	// tipo nuevo vale al instante para las impresoras sin perfil del Backend.
 	s.d.Cfg.Printers = upsertManaged(s.d.Cfg.Printers, ports.ManagedPrinter{
 		Name: body.Name, Role: ports.PrinterRole(body.Role), Enabled: body.Enabled,
 		Kind:        kind,
@@ -288,15 +282,15 @@ func (s *Server) printersDrawer(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, "no hay impresora disponible")
 		return
 	}
-	prof := s.ensureProfile(printer)
+	prof := localProfile(s.d.Profiles, s.d.Cfg, printer)
 	if !prof.SupportsDrawer {
 		writeErr(w, "la impresora no tiene cajón (solo impresoras térmicas con cajón)")
 		return
 	}
-	err := s.d.Engine.Print(r.Context(), dp.PrintJob{
+	err := s.d.Engine.PrintWithProfile(r.Context(), dp.PrintJob{
 		PrinterID: printer, Format: dp.FormatText, Content: []byte(""),
 		Options: dp.Options{Copies: 1, OpenDrawer: true},
-	})
+	}, prof)
 	if err != nil {
 		writeErr(w, err.Error())
 		return
@@ -328,46 +322,48 @@ func (s *Server) testPrint(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, "no hay impresora disponible")
 		return
 	}
-	// Adaptativo: si la impresora es de tipo "normal" (perfil PDF, ej. HP láser)
-	// se envía un PDF de prueba; si es térmica (ESC/POS) se envía texto.
-	prof := s.ensureProfile(printer)
-	var err error
-	if profileIsPDF(prof) {
-		err = s.d.Engine.Print(r.Context(), dp.PrintJob{
-			PrinterID: printer, Format: dp.FormatPDF, Content: testPagePDF,
-			Options: dp.Options{Copies: 1},
-		})
-	} else {
-		err = QuickTestPrint(r.Context(), s.d.Engine, s.d.Profiles, printer)
-	}
-	if err != nil {
+	if err := PrintTestPage(r.Context(), s.d.Engine, s.d.Profiles, s.d.Cfg, printer); err != nil {
 		writeErr(w, err.Error())
 		return
 	}
 	writeJSON(w, map[string]any{"ok": true, "printer": printer})
 }
 
-// ensureProfile returns the printer's profile. Si el Backend no ha enviado
-// perfil todavía, instala uno por defecto según el tipo declarado por el
-// usuario en el panel (thermal → ESC/POS, pdf → PDF; en Windows el modo de la
-// impresora decide si va vectorial o por GDI raster). Nunca sobrescribe
-// un perfil real que ya venga del Backend.
-func (s *Server) ensureProfile(printer string) dp.PrinterProfile {
-	if p, err := s.d.Profiles.Profile(printer); err == nil && len(p.NativeFormats) > 0 {
-		return p
+// PrintTestPage imprime una prueba en printer: la página PDF si es una impresora
+// de página (láser / inyección) o un ticket de texto si es térmica. La comparten
+// el "Probar" del panel y el de la bandeja para que se comporten igual.
+//
+// No escribe la caché de perfiles. Antes instalaba un perfil ESC/POS en ella y
+// una láser con perfil del ERP pasaba a recibir ESC/POS crudo en los trabajos del
+// ERP hasta la siguiente sincronización.
+func PrintTestPage(ctx context.Context, engine *appprint.Engine, profiles dp.FallbackProfileProvider, cfg ports.Config, printer string) error {
+	prof := localProfile(profiles, cfg, printer)
+	job := dp.PrintJob{PrinterID: printer, Options: dp.Options{Copies: 1}}
+	if profileIsPDF(prof) {
+		job.Format, job.Content = dp.FormatPDF, testPagePDF
+	} else {
+		job.Format = dp.FormatText
+		job.Content = []byte(fmt.Sprintf("TERA AGENT\nPrueba de impresion\n%s\n", time.Now().Format("2006-01-02 15:04")))
+		job.Options.Cut = true
 	}
-	switch s.d.Cfg.KindOf(printer) {
-	case ports.KindPDF:
-		s.pdfProfile(printer)
-	default:
-		s.escposProfile(printer)
+	return engine.PrintWithProfile(ctx, job, prof)
+}
+
+// localProfile devuelve el perfil con el que imprime una acción local: el del
+// Backend si existe; si no, uno por defecto según el tipo declarado en el panel
+// (thermal → ESC/POS, pdf → PDF). El por defecto solo vive para ese trabajo y la
+// caché lo prepara igual que uno del Backend (en Windows, el modo vectorial o
+// imagen de la impresora).
+func localProfile(profiles dp.FallbackProfileProvider, cfg ports.Config, printer string) dp.PrinterProfile {
+	fallback := escposProfile(printer)
+	if cfg.KindOf(printer) == ports.KindPDF {
+		fallback = pdfProfile(cfg, printer)
 	}
-	p, _ := s.d.Profiles.Profile(printer)
-	return p
+	return profiles.ProfileOr(printer, fallback)
 }
 
 // profileIsPDF reports whether the printer consumes PDF natively (láser /
-// inyección / virtual PDF). Coincide con lo que instala pdfProfile localmente.
+// inyección / virtual PDF). Reconoce también el perfil por defecto pdfProfile.
 func profileIsPDF(p dp.PrinterProfile) bool {
 	for _, f := range p.NativeFormats {
 		if f == dp.DevicePDF || f == dp.DeviceGDIRaster {
@@ -377,27 +373,27 @@ func profileIsPDF(p dp.PrinterProfile) bool {
 	return false
 }
 
-// escposProfile installs a sensible default ESC/POS profile so the local test /
-// drawer actions work without a Backend-provided profile.
-func (s *Server) escposProfile(printer string) {
-	s.d.Profiles.Set(dp.PrinterProfile{
+// escposProfile is a sensible default ESC/POS profile so the local test / drawer
+// actions work without a Backend-provided profile.
+func escposProfile(printer string) dp.PrinterProfile {
+	return dp.PrinterProfile{
 		PrinterID: printer, NativeFormats: []dp.DeviceFormat{dp.DeviceESCPOS},
 		WidthDots: 576, DPI: 203, SupportsCut: true, SupportsDrawer: true,
-	})
+	}
 }
 
-// pdfProfile instala un perfil por defecto para impresoras láser / inyección /
+// pdfProfile es el perfil por defecto de las impresoras láser / inyección /
 // virtuales PDF. Declara DevicePDF, igual que el perfil que envía el Backend para
 // una impresora "normal": el cache de perfiles lo traduce en Windows según el
 // modo de la impresora (vectorial con pdftocairo, o imagen por GDI raster).
 //
 // El DPI solo tendría sentido en modo imagen y hoy no llega a aplicarse:
 // NormalizeForGDIRaster sube todo perfil raster al mínimo de 600 DPI / 4960 dots
-// y el rasterizador prioriza el ancho sobre el DPI. Se sigue guardando para no
+// y el rasterizador prioriza el ancho sobre el DPI. Se sigue rellenando para no
 // cambiar el formato del perfil; ver la nota de RenderDPI en ports.Config.
-func (s *Server) pdfProfile(printer string) {
-	_, dpi := s.d.Cfg.PageTuning(printer)
-	s.d.Profiles.Set(dp.PrinterProfile{
+func pdfProfile(cfg ports.Config, printer string) dp.PrinterProfile {
+	_, dpi := cfg.PageTuning(printer)
+	return dp.PrinterProfile{
 		PrinterID: printer, NativeFormats: []dp.DeviceFormat{dp.DevicePDF},
 		// WidthDots: 0 a propósito. Antes se fijaba a 4960 (ancho de A4 a 600dpi),
 		// lo que forzaba CUALQUIER documento al ancho de un A4: un Letter o un A5
@@ -406,22 +402,7 @@ func (s *Server) pdfProfile(printer string) {
 		WidthDots: 0, DPI: dpi,
 		SupportsCut:    false,
 		SupportsDrawer: false,
-	})
-}
-
-// QuickTestPrint installs a default ESC/POS profile and prints a short test
-// ticket on printer. Shared by the UI test-print endpoint and the tray "Probar"
-// action so both behave identically.
-func QuickTestPrint(ctx context.Context, engine *appprint.Engine, profiles dp.ProfileCache, printer string) error {
-	profiles.Set(dp.PrinterProfile{
-		PrinterID: printer, NativeFormats: []dp.DeviceFormat{dp.DeviceESCPOS},
-		WidthDots: 576, DPI: 203, SupportsCut: true, SupportsDrawer: true,
-	})
-	content := fmt.Sprintf("TERA AGENT\nPrueba de impresion\n%s\n", time.Now().Format("2006-01-02 15:04"))
-	return engine.Print(ctx, dp.PrintJob{
-		PrinterID: printer, Format: dp.FormatText, Content: []byte(content),
-		Options: dp.Options{Copies: 1, Cut: true},
-	})
+	}
 }
 
 // persist writes the current config through SaveConfig and re-applies the cut

@@ -281,6 +281,44 @@ func TestNormalizingProfileCache_ForgetPasses(t *testing.T) {
 	}
 }
 
+// El perfil del Backend gana al respaldo y sale traducido igual que por Profile.
+// Es lo que ven "Probar" y POST /print en una láser con perfil del ERP.
+func TestNormalizingProfileCache_ProfileOrKeepsBackendProfile(t *testing.T) {
+	inner := &fakeCache{m: map[string]dp.PrinterProfile{
+		"HP": {PrinterID: "HP", NativeFormats: []dp.DeviceFormat{dp.DevicePDF}},
+	}}
+	cache := NormalizingProfileCache(inner, func(p dp.PrinterProfile) dp.PrinterProfile {
+		return NormalizeForWindows(p, ports.PageModeVector)
+	})
+
+	got := cache.ProfileOr("HP", dp.PrinterProfile{NativeFormats: []dp.DeviceFormat{dp.DeviceESCPOS}, WidthDots: 576})
+	assertFormats(t, got.NativeFormats, dp.DevicePDF, dp.DeviceGDIRaster)
+	assertFormats(t, inner.m["HP"].NativeFormats, dp.DevicePDF)
+}
+
+// El respaldo también se normaliza, con el modo de la impresora: el perfil local
+// por defecto de una láser tiene que imprimir por el mismo camino que uno del
+// ERP. Y ProfileOr no lo guarda.
+func TestNormalizingProfileCache_ProfileOrNormalizesFallback(t *testing.T) {
+	inner := &fakeCache{m: map[string]dp.PrinterProfile{}}
+	mode := ports.PageModeVector
+	cache := NormalizingProfileCache(inner, func(p dp.PrinterProfile) dp.PrinterProfile {
+		if p.PrinterID != "HP" {
+			t.Errorf("el normalizador recibió PrinterID %q; el modo se resuelve por impresora", p.PrinterID)
+		}
+		return NormalizeForWindows(p, mode)
+	})
+	fallback := dp.PrinterProfile{NativeFormats: []dp.DeviceFormat{dp.DevicePDF}}
+
+	assertFormats(t, cache.ProfileOr("HP", fallback).NativeFormats, dp.DevicePDF, dp.DeviceGDIRaster)
+	mode = ports.PageModeImage
+	assertFormats(t, cache.ProfileOr("HP", fallback).NativeFormats, dp.DeviceGDIRaster)
+
+	if len(inner.m) != 0 {
+		t.Errorf("ProfileOr escribió en la caché: %v", inner.m)
+	}
+}
+
 // fakeCache es un ProfileCache mínimo para tests: no traduce, sólo almacena. err,
 // si no es nil, se devuelve para los perfiles que no existen.
 type fakeCache struct {
@@ -301,6 +339,13 @@ func (c *fakeCache) SetAll(ps []dp.PrinterProfile) {
 	}
 }
 func (c *fakeCache) Forget(id string) { delete(c.m, id) }
+func (c *fakeCache) ProfileOr(id string, fallback dp.PrinterProfile) dp.PrinterProfile {
+	if p, ok := c.m[id]; ok && len(p.NativeFormats) > 0 {
+		return p
+	}
+	fallback.PrinterID = id
+	return fallback
+}
 
 // --- Nombres con tildes y Windows sin UTF-8 en manifiestos ---
 

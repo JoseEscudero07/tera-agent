@@ -109,6 +109,18 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1.0.0/).
   dejado el interruptor de "activar impresora" siendo solo un cambio de color.
 
 ### Fixed
+- **"Probar" (bandeja y panel) y `POST /print` ya no pisan el perfil del ERP.**
+  Instalaban un perfil ESC/POS en la caché de perfiles compartida: una láser con
+  perfil `pdf` del ERP pasaba a recibir ESC/POS crudo en los trabajos del ERP hasta
+  la siguiente sincronización, y una térmica de 58 mm quedaba a 576 dots. Ahora
+  estas acciones leen el perfil con `ProfileOr` y, si no hay, usan uno por defecto
+  solo para ese trabajo (`Engine.PrintWithProfile`), normalizado igual que uno del
+  ERP. La caché solo guarda perfiles del Backend.
+- "Probar" en la bandeja se comporta como el del panel (`ui.PrintTestPage`): en
+  una láser imprime la página PDF de prueba en vez de un ticket ESC/POS.
+- Cambiar el tipo de una impresora en el panel ya no olvida su perfil: solo podía
+  tirar el del ERP y dejar sus trabajos sin perfil. El tipo nuevo aplica al
+  instante a las impresoras sin perfil del ERP.
 - Carrera de datos entre el panel y los trabajos en curso: el panel modificaba
   `Config.Printers` en su sitio mientras los resolutores del motor lo leían
   (detectado con `go test -race`).

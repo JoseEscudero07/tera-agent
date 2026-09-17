@@ -20,14 +20,25 @@ type ProfileProvider interface {
 	Profile(printerID string) (PrinterProfile, error)
 }
 
+// FallbackProfileProvider resuelve el perfil de las acciones locales (probar,
+// abrir cajón, POST /print) sin escribir la caché. Read side.
+type FallbackProfileProvider interface {
+	// ProfileOr devuelve el perfil cacheado de printerID si tiene formatos
+	// nativos; si no, fallback con PrinterID = printerID. El resultado pasa por
+	// la misma preparación de plataforma que Profile, así que un perfil de
+	// respaldo imprime por el mismo camino que uno del Backend.
+	ProfileOr(printerID string, fallback PrinterProfile) PrinterProfile
+}
+
 // ProfileCache adds the write side, used by the communication layer when the
-// Backend pushes profiles (on authentication and on change).
+// Backend pushes profiles (on authentication and on change). Solo guarda perfiles
+// del Backend: las acciones locales usan ProfileOr y no escriben aquí, porque un
+// perfil local instalado pisaba el del ERP hasta la siguiente sincronización.
 type ProfileCache interface {
 	ProfileProvider
+	FallbackProfileProvider
 	Set(PrinterProfile)      // upsert one profile
 	SetAll([]PrinterProfile) // full sync
-	// Forget descarta el perfil cacheado de una impresora concreta. La UI lo
-	// usa cuando el usuario cambia el tipo local (thermal↔pdf) para evitar
-	// que ensureProfile respete un perfil ya obsoleto.
+	// Forget descarta el perfil cacheado de una impresora concreta.
 	Forget(printerID string)
 }

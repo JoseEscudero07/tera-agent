@@ -23,21 +23,32 @@ func (f fakeDiscovery) List(context.Context) ([]dp.Printer, error) {
 }
 func (fakeDiscovery) StatusOf(context.Context, string) (dp.Status, error) { return "READY", nil }
 
-// recordingProfiles cuenta los Forget: un cambio de modo no debe tirar el perfil
-// que envió el Backend.
+// recordingProfiles es una caché de perfiles que cuenta las escrituras: ni un
+// cambio en el panel ni "Probar" deben tocar el perfil que envió el Backend.
 type recordingProfiles struct {
 	m       map[string]dp.PrinterProfile
+	sets    int
 	forgets []string
 }
 
 func (c *recordingProfiles) Profile(id string) (dp.PrinterProfile, error) { return c.m[id], nil }
-func (c *recordingProfiles) Set(p dp.PrinterProfile)                      { c.m[p.PrinterID] = p }
+func (c *recordingProfiles) Set(p dp.PrinterProfile)                      { c.sets++; c.m[p.PrinterID] = p }
 func (c *recordingProfiles) SetAll(ps []dp.PrinterProfile) {
+	c.sets++
 	for _, p := range ps {
 		c.m[p.PrinterID] = p
 	}
 }
 func (c *recordingProfiles) Forget(id string) { c.forgets = append(c.forgets, id) }
+func (c *recordingProfiles) ProfileOr(id string, fallback dp.PrinterProfile) dp.PrinterProfile {
+	if p, ok := c.m[id]; ok && len(p.NativeFormats) > 0 {
+		return p
+	}
+	fallback.PrinterID = id
+	return fallback
+}
+
+func (c *recordingProfiles) writes() int { return c.sets + len(c.forgets) }
 
 func manage(t *testing.T, s *Server, body string) {
 	t.Helper()
@@ -112,15 +123,11 @@ func TestPrintersListExposesEffectivePageMode(t *testing.T) {
 // El perfil local de una láser declara pdf, como el del Backend: así pasa por la
 // misma traducción de modo y "Probar" imprime igual que un trabajo del ERP.
 func TestPDFProfileDeclaresPDF(t *testing.T) {
-	s, _, _ := newTestServer(ports.Config{})
-	profiles := &recordingProfiles{m: map[string]dp.PrinterProfile{}}
-	s.d.Profiles = profiles
-	s.pdfProfile("HP")
-	got := profiles.m["HP"].NativeFormats
-	if len(got) != 1 || got[0] != dp.DevicePDF {
-		t.Errorf("NativeFormats = %v, want [pdf]", got)
+	p := pdfProfile(ports.Config{}, "HP")
+	if len(p.NativeFormats) != 1 || p.NativeFormats[0] != dp.DevicePDF {
+		t.Errorf("NativeFormats = %v, want [pdf]", p.NativeFormats)
 	}
-	if !profileIsPDF(profiles.m["HP"]) {
+	if !profileIsPDF(p) {
 		t.Error("profileIsPDF no reconoce el perfil local de página")
 	}
 }
@@ -181,15 +188,29 @@ func TestRenderDPIChangeKeepsBackendProfile(t *testing.T) {
 	}
 }
 
-// Cambiar el TIPO sí debe olvidar el perfil: el anterior era de otra familia.
-func TestKindChangeStillForgetsProfile(t *testing.T) {
+// Cambiar el TIPO tampoco olvida el perfil. La caché solo guarda los del Backend
+// (el perfil por defecto de las acciones locales es efímero), así que olvidarlo
+// dejaba los trabajos del ERP sin perfil hasta la siguiente sincronización. El
+// tipo nuevo vale al instante para las impresoras sin perfil del Backend.
+func TestKindChangeKeepsBackendProfile(t *testing.T) {
 	s, _, _ := newTestServer(ports.Config{Printers: []ports.ManagedPrinter{
 		{Name: "XP-80", Enabled: true, Kind: ports.KindPDF},
+		{Name: "Sin perfil", Enabled: true, Kind: ports.KindPDF},
 	}})
-	profiles := &recordingProfiles{m: map[string]dp.PrinterProfile{}}
+	backend := dp.PrinterProfile{PrinterID: "XP-80", NativeFormats: []dp.DeviceFormat{dp.DeviceESCPOS}, WidthDots: 576}
+	profiles := &recordingProfiles{m: map[string]dp.PrinterProfile{"XP-80": backend}}
 	s.d.Profiles = profiles
+
 	manage(t, s, `{"name":"XP-80","enabled":true,"kind":"thermal"}`)
-	if len(profiles.forgets) != 1 || profiles.forgets[0] != "XP-80" {
-		t.Errorf("forgets = %v, want [XP-80]", profiles.forgets)
+	manage(t, s, `{"name":"Sin perfil","enabled":true,"kind":"thermal"}`)
+
+	if n := profiles.writes(); n != 0 {
+		t.Errorf("cambiar el tipo escribió %d veces en la caché (forgets %v)", n, profiles.forgets)
+	}
+	if got := localProfile(s.d.Profiles, s.d.Cfg, "XP-80"); got.WidthDots != backend.WidthDots {
+		t.Errorf("XP-80 usa %+v, want el perfil del Backend", got)
+	}
+	if got := localProfile(s.d.Profiles, s.d.Cfg, "Sin perfil"); profileIsPDF(got) {
+		t.Errorf("tras pasar a térmica el perfil por defecto sigue siendo de página: %v", got.NativeFormats)
 	}
 }

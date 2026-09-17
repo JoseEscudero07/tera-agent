@@ -146,7 +146,7 @@ func runWithTray(ctx context.Context, stop func(), app *di.App) {
 	systray.Run(onReady, stop)
 }
 
-// trayTestPrint prints a test ticket on the default (or first discovered)
+// trayTestPrint prints a test page on the default (or first discovered)
 // printer, reusing the same routine as the web panel's "Probar" button.
 func trayTestPrint(ctx context.Context, app *di.App) {
 	printer := app.Cfg.DefaultPrinter
@@ -159,7 +159,7 @@ func trayTestPrint(ctx context.Context, app *di.App) {
 		app.Log.Warn("tray: no hay impresora para la prueba")
 		return
 	}
-	if err := ui.QuickTestPrint(ctx, app.Engine, app.Profiles, printer); err != nil {
+	if err := ui.PrintTestPage(ctx, app.Engine, app.Profiles, app.Cfg, printer); err != nil {
 		app.Log.Error("tray: prueba de impresión falló", "err", err)
 	}
 }
