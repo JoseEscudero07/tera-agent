@@ -25,7 +25,6 @@ type wireManagedPrinter struct {
 	TopMarginDots int    `yaml:"top_margin_dots"`
 	// Solo para kind=pdf. omitempty para no ensuciar el YAML de las térmicas.
 	PageMarginMM float64 `yaml:"page_margin_mm,omitempty"`
-	RenderDPI    int     `yaml:"render_dpi,omitempty"`
 	// vector | image. Vacío = vector.
 	PageMode string `yaml:"page_mode,omitempty"`
 }
@@ -49,7 +48,6 @@ type wire struct {
 		CutFeedDots   int                  `yaml:"cut_feed_dots"`
 		TopMarginDots int                  `yaml:"top_margin_dots"`
 		PageMarginMM  float64              `yaml:"page_margin_mm"`
-		RenderDPI     int                  `yaml:"render_dpi"`
 		Managed       []wireManagedPrinter `yaml:"managed"`
 	} `yaml:"printer"`
 	Heartbeat struct {
@@ -86,8 +84,8 @@ func (f *fileStore) Load() (ports.Config, error) {
 			Name: p.Name, Role: ports.PrinterRole(p.Role), Enabled: p.Enabled,
 			Kind:        ports.PrinterKind(p.Kind),
 			CutFeedDots: p.CutFeedDots, TopMarginDots: p.TopMarginDots,
-			PageMarginMM: p.PageMarginMM, RenderDPI: p.RenderDPI,
-			PageMode: ports.PageMode(p.PageMode),
+			PageMarginMM: p.PageMarginMM,
+			PageMode:     ports.PageMode(p.PageMode),
 		})
 	}
 	return ports.Config{
@@ -99,7 +97,6 @@ func (f *fileStore) Load() (ports.Config, error) {
 		CutFeedDots:        w.Printer.CutFeedDots,
 		TopMarginDots:      w.Printer.TopMarginDots,
 		PageMarginMM:       w.Printer.PageMarginMM,
-		RenderDPI:          w.Printer.RenderDPI,
 		HeartbeatInterval:  time.Duration(w.Heartbeat.Seconds) * time.Second,
 		LogLevel:           level,
 		LogFile:            w.Log.File,
@@ -123,14 +120,13 @@ func (f *fileStore) Save(c ports.Config) error {
 	w.Printer.CutFeedDots = c.CutFeedDots
 	w.Printer.TopMarginDots = c.TopMarginDots
 	w.Printer.PageMarginMM = c.PageMarginMM
-	w.Printer.RenderDPI = c.RenderDPI
 	for _, p := range c.Printers {
 		w.Printer.Managed = append(w.Printer.Managed, wireManagedPrinter{
 			Name: p.Name, Role: string(p.Role), Enabled: p.Enabled,
 			Kind:        string(p.Kind),
 			CutFeedDots: p.CutFeedDots, TopMarginDots: p.TopMarginDots,
-			PageMarginMM: p.PageMarginMM, RenderDPI: p.RenderDPI,
-			PageMode: string(p.PageMode),
+			PageMarginMM: p.PageMarginMM,
+			PageMode:     string(p.PageMode),
 		})
 	}
 	w.Heartbeat.Seconds = int(c.HeartbeatInterval / time.Second)

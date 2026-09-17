@@ -109,12 +109,10 @@ func applyPageMargin(drivers []dp.Driver, fn func(printerID string) float64) {
 	}
 }
 
-// pageMarginOf adapta Config.PageTuning (que resuelve margen y DPI) a lo único
-// que necesita el driver: el margen.
+// pageMarginOf adapta Config.PageMargin al resolutor que instala el driver.
 func pageMarginOf(cfg ports.Config) func(string) float64 {
 	return func(printerID string) float64 {
-		marginMM, _ := cfg.PageTuning(printerID)
-		return marginMM
+		return cfg.PageMargin(printerID)
 	}
 }
 

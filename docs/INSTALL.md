@@ -191,7 +191,7 @@ En **Panel → Impresoras**, cada impresora de tipo *Láser / PDF* tiene un sele
 | Modo | Cómo imprime | Cuándo |
 |---|---|---|
 | **Vectorial** (por defecto) | `pdftocairo` dibuja el PDF en el driver de la impresora: el texto llega como texto y la impresora lo imprime a su resolución nativa. Carta sale en carta y A4 en A4. | Siempre que funcione |
-| **Imagen** (compatibilidad) | Cada página se rasteriza y se envía como bitmap por GDI. Aplican el margen y los DPI de la impresora. | Solo si el driver de una impresora concreta da problemas con el vectorial |
+| **Imagen** (compatibilidad) | Cada página se rasteriza y se envía como bitmap por GDI. Aplica el margen configurado para la impresora. | Solo si el driver de una impresora concreta da problemas con el vectorial |
 
 Medido en Windows 11 limpio con facturas del ERP (fpdf2): 29 páginas en **25 s y
 24 MB** en vectorial; en modo imagen la misma factura agotaba la memoria de un

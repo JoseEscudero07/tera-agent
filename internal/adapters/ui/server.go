@@ -174,7 +174,6 @@ func (s *Server) printers(w http.ResponseWriter, r *http.Request) {
 			"cutFeedDots":   mp.CutFeedDots,   // 0 = usar default
 			"topMarginDots": mp.TopMarginDots, // 0 = usar default
 			"pageMarginMM":  mp.PageMarginMM,  // 0 = usar default (impresoras de hoja)
-			"renderDPI":     mp.RenderDPI,     // 0 = usar default
 			// vector | image. Se resuelve con el mismo helper que usa la impresión,
 			// para que el panel muestre el modo con el que de verdad se imprime.
 			"pageMode": string(s.d.Cfg.PageModeOf(p.Name)),
@@ -194,7 +193,6 @@ func (s *Server) printersManage(w http.ResponseWriter, r *http.Request) {
 		CutFeedDots   int     `json:"cutFeedDots"`
 		TopMarginDots int     `json:"topMarginDots"`
 		PageMarginMM  float64 `json:"pageMarginMM"`
-		RenderDPI     int     `json:"renderDPI"`
 		PageMode      string  `json:"pageMode"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&body)
@@ -214,11 +212,6 @@ func (s *Server) printersManage(w http.ResponseWriter, r *http.Request) {
 	// Un margen mayor que media hoja dejaría un área de impresión nula; acotarlo
 	// aquí evita que el driver tenga que decidir qué hacer con un absurdo.
 	body.PageMarginMM = clampFloat(body.PageMarginMM, 0, maxPageMarginMM)
-	// Fuera de este rango, o el texto es ilegible o el bitmap no cabe en el
-	// presupuesto de DIB de los drivers host-based y el backoff lo reduce igual.
-	if body.RenderDPI != 0 {
-		body.RenderDPI = clamp(body.RenderDPI, minRenderDPI, maxRenderDPI)
-	}
 	kind := ports.PrinterKind(body.Kind)
 	// Rechazar valores desconocidos y caer al default (thermal) evita meter
 	// basura al YAML si el panel manda algo inesperado.
@@ -234,7 +227,7 @@ func (s *Server) printersManage(w http.ResponseWriter, r *http.Request) {
 	if ports.PageMode(body.PageMode) == ports.PageModeImage {
 		pageMode = ports.PageModeImage
 	}
-	// Ni el tipo ni el DPI olvidan el perfil cacheado. La caché solo guarda
+	// Cambiar el tipo no olvida el perfil cacheado. La caché solo guarda
 	// perfiles del Backend —el perfil por defecto de las acciones locales es
 	// efímero (localProfile)—, así que olvidarlo solo tiraba el del ERP y sus
 	// trabajos fallaban con "no profile" hasta la siguiente sincronización. El
@@ -243,8 +236,8 @@ func (s *Server) printersManage(w http.ResponseWriter, r *http.Request) {
 		Name: body.Name, Role: ports.PrinterRole(body.Role), Enabled: body.Enabled,
 		Kind:        kind,
 		CutFeedDots: body.CutFeedDots, TopMarginDots: body.TopMarginDots,
-		PageMarginMM: body.PageMarginMM, RenderDPI: body.RenderDPI,
-		PageMode: pageMode,
+		PageMarginMM: body.PageMarginMM,
+		PageMode:     pageMode,
 	})
 	if err := s.persist(); err != nil {
 		writeErr(w, err.Error())
@@ -357,7 +350,7 @@ func PrintTestPage(ctx context.Context, engine *appprint.Engine, profiles dp.Fal
 func localProfile(profiles dp.FallbackProfileProvider, cfg ports.Config, printer string) dp.PrinterProfile {
 	fallback := escposProfile(printer)
 	if cfg.KindOf(printer) == ports.KindPDF {
-		fallback = pdfProfile(cfg, printer)
+		fallback = pdfProfile(printer)
 	}
 	return profiles.ProfileOr(printer, fallback)
 }
@@ -387,19 +380,16 @@ func escposProfile(printer string) dp.PrinterProfile {
 // una impresora "normal": el cache de perfiles lo traduce en Windows según el
 // modo de la impresora (vectorial con pdftocairo, o imagen por GDI raster).
 //
-// El DPI solo tendría sentido en modo imagen y hoy no llega a aplicarse:
-// NormalizeForGDIRaster sube todo perfil raster al mínimo de 600 DPI / 4960 dots
-// y el rasterizador prioriza el ancho sobre el DPI. Se sigue rellenando para no
-// cambiar el formato del perfil; ver la nota de RenderDPI en ports.Config.
-func pdfProfile(cfg ports.Config, printer string) dp.PrinterProfile {
-	_, dpi := cfg.PageTuning(printer)
+// Sin DPI a propósito: en modo imagen NormalizeForGDIRaster fija 600 DPI / 4960
+// dots, y en vectorial la impresora imprime a su propia resolución.
+func pdfProfile(printer string) dp.PrinterProfile {
 	return dp.PrinterProfile{
 		PrinterID: printer, NativeFormats: []dp.DeviceFormat{dp.DevicePDF},
 		// WidthDots: 0 a propósito. Antes se fijaba a 4960 (ancho de A4 a 600dpi),
 		// lo que forzaba CUALQUIER documento al ancho de un A4: un Letter o un A5
 		// salían estirados. Con 0, el rasterizador respeta el tamaño real de la
-		// página del PDF y sólo aplica el DPI pedido.
-		WidthDots: 0, DPI: dpi,
+		// página del PDF.
+		WidthDots:      0,
 		SupportsCut:    false,
 		SupportsDrawer: false,
 	}
@@ -467,11 +457,6 @@ const maxCutFeedDots = 2000
 const (
 	// maxPageMarginMM: más de 50mm por lado deja un A4 sin sitio útil.
 	maxPageMarginMM = 50.0
-	// Por debajo de 150 dpi el texto pequeño es ilegible; por encima de 600 el
-	// bitmap no cabe en el presupuesto de DIB de los drivers host-based y el
-	// backoff acaba reduciéndolo igual, así que sólo se gana lentitud.
-	minRenderDPI = 150
-	maxRenderDPI = 600
 )
 
 func clampFloat(v, lo, hi float64) float64 {
@@ -500,7 +485,6 @@ func (s *Server) config(w http.ResponseWriter, r *http.Request) {
 			"cutFeedDots":   s.d.Cfg.CutFeedDots,
 			"topMarginDots": s.d.Cfg.TopMarginDots,
 			"pageMarginMM":  s.d.Cfg.PageMarginMM,
-			"renderDPI":     s.d.Cfg.RenderDPI,
 		})
 		return
 	}
@@ -516,7 +500,6 @@ func (s *Server) config(w http.ResponseWriter, r *http.Request) {
 		CutFeedDots   *int     `json:"cutFeedDots"`
 		TopMarginDots *int     `json:"topMarginDots"`
 		PageMarginMM  *float64 `json:"pageMarginMM"`
-		RenderDPI     *int     `json:"renderDPI"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeErr(w, "petición inválida: "+err.Error())
@@ -563,15 +546,6 @@ func (s *Server) config(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.PageMarginMM != nil {
 		s.d.Cfg.PageMarginMM = clampFloat(*body.PageMarginMM, 0, maxPageMarginMM)
-	}
-	if body.RenderDPI != nil {
-		dpi := *body.RenderDPI
-		if dpi != 0 { // 0 = usar el default interno
-			dpi = clamp(dpi, minRenderDPI, maxRenderDPI)
-		}
-		// No toca la caché de perfiles, por la misma razón que printersManage:
-		// olvidar perfiles tiraba los del Backend.
-		s.d.Cfg.RenderDPI = dpi
 	}
 
 	if s.d.ApplyTuning != nil {

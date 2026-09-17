@@ -111,6 +111,12 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1.0.0/).
   equipo sin poppler en el `PATH`.
 
 ### Removed
+- **Ajuste de calidad (DPI) de las impresoras de hoja**, en el panel (por
+  impresora y por defecto) y en `config.yaml` (`render_dpi`). Nunca tuvo efecto:
+  el modo imagen sube siempre el raster a 600 DPI / 4960 dots y el vectorial
+  imprime a la resolución de la impresora. Los `config.yaml` con `render_dpi`
+  siguen cargando y el campo desaparece al guardar. `ports.Config.PageTuning`
+  pasa a `PageMargin`, que resuelve solo el margen.
 - Tres interruptores del panel que no hacían nada: "Reconectar automáticamente",
   "Iniciar con Windows" y "Minimizar a la bandeja". Solo cambiaban un color — no
   los leía `saveConfig()`, no existían en `/api/config` ni en `ports.Config`. En su
@@ -140,8 +146,6 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1.0.0/).
 - Carrera de datos entre el panel y los trabajos en curso: el panel modificaba
   `Config.Printers` en su sitio mientras los resolutores del motor lo leían
   (detectado con `go test -race`).
-- Cambiar los DPI en el panel olvidaba el perfil de la impresora, incluido el del
-  ERP, y sus trabajos fallaban hasta la siguiente sincronización.
 - `windows-verify.ps1` daba un falso fallo de "reintentos del servicio" en
   Windows en español (buscaba `RESTART` en la salida traducida de `sc.exe`); ahora
   lee `FailureActions` del registro.

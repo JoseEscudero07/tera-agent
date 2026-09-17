@@ -241,10 +241,9 @@
             </div>
             <span class="muted" style="font-size:12px">Se aplican a las impresoras sin valor propio. Vacío/0 = default interno (232 / 16).</span>
           </div>
-          <div class="field mt"><label>Impresoras de hoja (A4 / láser) por defecto</label>
+          <div class="field mt"><label>Impresoras de hoja (A4 / láser) en modo imagen, por defecto</label>
             <div style="display:flex;gap:10px">
               <div style="flex:1"><span class="muted" style="font-size:12px">Margen desde el borde ▭ (mm)</span><input class="input" type="number" min="0" max="50" step="0.5" id="c-pagemargin" placeholder="0"></div>
-              <div style="flex:1"><span class="muted" style="font-size:12px">Calidad ◎ (DPI)</span><input class="input" type="number" min="150" max="600" step="50" id="c-renderdpi" placeholder="300"></div>
             </div>
             <span class="muted" style="font-size:12px">Margen 0 = la página se imprime completa, 1:1 con el papel; la impresora recorta su margen físico (≈4 mm), que no se puede evitar.</span>
           </div>
@@ -398,9 +397,8 @@ async function loadConfig(){
   const set=(id,v)=>{const el=document.getElementById(id); if(el && document.activeElement!==el) el.value=(v??'');};
   set('c-nombre',cfg.nombre); set('c-url',cfg.url); set('c-data',cfg.dataDir);
   set('c-cutfeed',cfg.cutFeedDots||''); set('c-topmargin',cfg.topMarginDots||'');
-  set('c-pagemargin',cfg.pageMarginMM||''); set('c-renderdpi',cfg.renderDPI||'');
+  set('c-pagemargin',cfg.pageMarginMM||'');
   if(cfg.pageMarginMM) DEFAULTS.pageMarginMM=cfg.pageMarginMM;
-  if(cfg.renderDPI) DEFAULTS.renderDPI=cfg.renderDPI;
   const log=document.getElementById('c-log'); if(log && cfg.log && document.activeElement!==log) log.value=cfg.log;
   // El token nunca llega al navegador: el campo queda vacío y el placeholder solo
   // indica si hay uno puesto y sus últimos 4 caracteres.
@@ -426,7 +424,7 @@ const PAGE_MODES={vector:'Vectorial (recomendado)',image:'Imagen (compatibilidad
 let AGENT_OS='windows';
 let PRINTERS=[]; // última lista cargada (para leer estado actual en las acciones)
 // Defaults globales de calibración (para los placeholders); se refrescan en loadStatus.
-const DEFAULTS={cutFeedDots:232,topMarginDots:16,pageMarginMM:0,renderDPI:300};
+const DEFAULTS={cutFeedDots:232,topMarginDots:16,pageMarginMM:0};
 const pdot=s=>s==='READY'?'green':(s==='OFFLINE'||s==='ERROR'?'red':'amber');
 const esc=s=>String(s).replace(/"/g,'&quot;');
 
@@ -450,12 +448,11 @@ function printerRowFull(p){
   const n=esc(p.name);
   const pageMode=p.pageMode==='image'?'image':'vector';
   const modeOpts=Object.entries(PAGE_MODES).map(([v,l])=>`<option value="${v}"${pageMode===v?' selected':''}>${l}</option>`).join('');
-  // Margen y DPI solo existen en modo imagen: en vectorial la impresora imprime
-  // a tamaño real y a su propia resolución, así que mostrarlos engañaría.
+  // El margen solo existe en modo imagen: en vectorial la impresora imprime a
+  // tamaño real y a su propia resolución, así que mostrarlo engañaría.
   const pageModes=AGENT_OS==='windows';
   const imageCal=pageMode==='image'?`
-    <label class="cal" title="Margen desde el borde del papel, en mm. 0 o vacío = página completa (el hardware recorta su margen físico, ~4mm). Vacío = ${DEFAULTS.pageMarginMM} mm por defecto.">▭<input type="number" min="0" max="50" step="0.5" placeholder="${DEFAULTS.pageMarginMM}" value="${p.pageMarginMM||''}" onchange="setPageCal('${n}','pageMarginMM',this.value)"></label>
-    <label class="cal" title="Calidad de rasterizado en DPI (150-600). Más DPI = más nítido y más lento. Vacío = ${DEFAULTS.renderDPI} por defecto.">◎<input type="number" min="150" max="600" step="50" placeholder="${DEFAULTS.renderDPI}" value="${p.renderDPI||''}" onchange="setPageCal('${n}','renderDPI',this.value)"></label>`:'';
+    <label class="cal" title="Margen desde el borde del papel, en mm. 0 o vacío = página completa (el hardware recorta su margen físico, ~4mm). Vacío = ${DEFAULTS.pageMarginMM} mm por defecto.">▭<input type="number" min="0" max="50" step="0.5" placeholder="${DEFAULTS.pageMarginMM}" value="${p.pageMarginMM||''}" onchange="setPageMargin('${n}',this.value)"></label>`:'';
   const cal=isThermal?`
     <label class="cal" title="Avance de papel antes del corte, en dots (1mm≈8). Vacío = ${DEFAULTS.cutFeedDots} por defecto.">✂<input type="number" min="0" max="2000" placeholder="${DEFAULTS.cutFeedDots}" value="${p.cutFeedDots||''}" onchange="setCal('${n}','cutFeedDots',this.value)"></label>
     <label class="cal" title="Margen superior a dejar, en dots. Vacío = ${DEFAULTS.topMarginDots} por defecto.">⬆<input type="number" min="0" placeholder="${DEFAULTS.topMarginDots}" value="${p.topMarginDots||''}" onchange="setCal('${n}','topMarginDots',this.value)"></label>`:`
@@ -484,7 +481,7 @@ async function loadPrinters(){
 }
 
 // --- Acciones de impresoras ---
-function findP(name){return PRINTERS.find(p=>p.name===name)||{name,role:'',kind:'thermal',enabled:true,cutFeedDots:0,topMarginDots:0,pageMarginMM:0,renderDPI:0,pageMode:'vector'};}
+function findP(name){return PRINTERS.find(p=>p.name===name)||{name,role:'',kind:'thermal',enabled:true,cutFeedDots:0,topMarginDots:0,pageMarginMM:0,pageMode:'vector'};}
 // Envía SIEMPRE todos los campos (partiendo del estado actual + los cambios) para
 // no pisar calibración/tipo/rol al togglear activo o cambiar cualquier otro.
 async function applyManage(name,changes){
@@ -497,7 +494,6 @@ async function applyManage(name,changes){
     cutFeedDots:p.cutFeedDots||0,
     topMarginDots:p.topMarginDots||0,
     pageMarginMM:p.pageMarginMM||0,
-    renderDPI:p.renderDPI||0,
     pageMode:p.pageMode||'vector',
     ...changes,
   };
@@ -513,16 +509,12 @@ function setCal(name,field,value){
   applyManage(name,{[field]:v});
   toast('ok','Calibración guardada',`${name}: ${field==='cutFeedDots'?'corte':'margen'} ${v||'default'}`);
 }
-// Ajustes de las impresoras de hoja. El margen es decimal (medio milímetro se
-// nota en un A4); el DPI es entero.
-function setPageCal(name,field,value){
-  const esMargen=field==='pageMarginMM';
-  const v=esMargen?Math.max(0,parseFloat(value)||0):Math.max(0,parseInt(value,10)||0);
-  applyManage(name,{[field]:v});
-  const desc=esMargen
-    ? `margen ${v?v+' mm':'default'}`
-    : `calidad ${v?v+' DPI':'default'}`;
-  toast('ok','Ajuste guardado',`${name}: ${desc}`);
+// Margen de las impresoras de hoja en modo imagen. Es decimal: medio milímetro se
+// nota en un A4.
+function setPageMargin(name,value){
+  const v=Math.max(0,parseFloat(value)||0);
+  applyManage(name,{pageMarginMM:v});
+  toast('ok','Ajuste guardado',`${name}: margen ${v?v+' mm':'default'}`);
 }
 async function setDefault(name){
   await api('/api/printers/default',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name})});
@@ -566,7 +558,7 @@ async function saveConfig(){
   const dec=id=>{const v=parseFloat(c(id));return isNaN(v)?0:Math.max(0,v);};
   const body={nombre:c('c-nombre'),url:c('c-url'),log:c('c-log'),
     cutFeedDots:num('c-cutfeed'),topMarginDots:num('c-topmargin'),
-    pageMarginMM:dec('c-pagemargin'),renderDPI:num('c-renderdpi')};
+    pageMarginMM:dec('c-pagemargin')};
   // El token solo se manda si el operador escribió algo: vacío significa
   // "no lo cambies", no "bórralo".
   const tok=c('c-token').trim();

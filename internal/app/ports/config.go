@@ -32,9 +32,6 @@ type Config struct {
 	// desde el borde FÍSICO del papel. 0 = DefaultPageMarginMM (página completa,
 	// 1:1 con el papel). Una impresora puede sobreescribirlo.
 	PageMarginMM float64
-	// RenderDPI es la calidad de rasterizado por defecto de las impresoras de
-	// página. 0 = DefaultRenderDPI. Una impresora puede sobreescribirlo.
-	RenderDPI int
 	// HeartbeatInterval is a default; the Backend may override it at handshake.
 	HeartbeatInterval time.Duration
 	// LogLevel: debug|info|warn|error.
@@ -104,13 +101,6 @@ type ManagedPrinter struct {
 	// measured desde el borde FÍSICO del papel. Solo aplica a impresoras de
 	// página (Kind == KindPDF). 0 = usar el default global.
 	PageMarginMM float64
-	// RenderDPI overrides the rasterisation quality for this printer. Solo aplica
-	// a impresoras de página en modo imagen. 0 = usar el default global.
-	//
-	// OJO: hoy no tiene efecto. En Windows el perfil raster se sube siempre a
-	// 600 DPI / 4960 dots (platform.NormalizeForGDIRaster) y el rasterizador
-	// prioriza el ancho sobre el DPI.
-	RenderDPI int
 	// PageMode decide cómo llega un documento a esta impresora de página en
 	// Windows. Vacío = PageModeVector.
 	PageMode PageMode
@@ -127,7 +117,7 @@ const (
 	PageModeVector PageMode = "vector"
 	// PageModeImage rasteriza cada página y la envía como bitmap por GDI. Se
 	// conserva como opción de compatibilidad para drivers que no se lleven bien
-	// con el modo vectorial; aquí aplican PageMarginMM y RenderDPI.
+	// con el modo vectorial; aquí aplica PageMarginMM.
 	PageModeImage PageMode = "image"
 )
 
@@ -173,26 +163,23 @@ const (
 	// como casi todos los documentos traen ≥10mm de margen propio no se pierde
 	// contenido. Es lo que hace un visor de PDF al imprimir a "Tamaño real".
 	DefaultPageMarginMM = 0.0
-
-	// DefaultRenderDPI equilibra nitidez y tamaño del bitmap. A 300 dpi un A4 en
-	// gris entra holgado en el presupuesto de DIB de los drivers host-based; 600
-	// se ve algo mejor en texto pequeño pero cuadruplica los bytes y hace que el
-	// driver GDI tenga que reducir por backoff en muchas impresoras.
-	DefaultRenderDPI = 300
 )
 
-// PageTuning resuelve el margen y el DPI de una impresora de página: gana el
-// override de la impresora, luego el default global, y si no los defaults
-// internos. Mismo criterio que PrinterTuning para el corte.
-func (c Config) PageTuning(printerID string) (marginMM float64, dpi int) {
-	marginMM, dpi = c.PageMarginMM, c.RenderDPI
+// PageMargin resuelve el margen de una impresora de página (modo imagen): gana el
+// override de la impresora, luego el default global y si no DefaultPageMarginMM.
+// Mismo criterio que PrinterTuning para el corte.
+//
+// No hay un ajuste equivalente de DPI: existió (RenderDPI) pero nunca tuvo
+// efecto, porque en Windows el perfil raster se sube siempre a 600 DPI / 4960
+// dots (platform.NormalizeForGDIRaster) y el modo vectorial imprime a la
+// resolución de la impresora. Los config.yaml antiguos con render_dpi cargan
+// igual; el campo se ignora.
+func (c Config) PageMargin(printerID string) float64 {
+	marginMM := c.PageMarginMM
 	for _, p := range c.Printers {
 		if p.Name == printerID {
 			if p.PageMarginMM != 0 {
 				marginMM = p.PageMarginMM
-			}
-			if p.RenderDPI != 0 {
-				dpi = p.RenderDPI
 			}
 			break
 		}
@@ -200,10 +187,7 @@ func (c Config) PageTuning(printerID string) (marginMM float64, dpi int) {
 	if marginMM == 0 {
 		marginMM = DefaultPageMarginMM
 	}
-	if dpi <= 0 {
-		dpi = DefaultRenderDPI
-	}
-	return marginMM, dpi
+	return marginMM
 }
 
 // PrinterTuning resolves the cut calibration for a printer: the per-printer

@@ -119,7 +119,7 @@ func TestPrintersListExposesEffectivePageMode(t *testing.T) {
 // El perfil local de una láser declara pdf, como el del Backend: así pasa por la
 // misma traducción de modo y "Probar" imprime igual que un trabajo del ERP.
 func TestPDFProfileDeclaresPDF(t *testing.T) {
-	p := pdfProfile(ports.Config{}, "HP")
+	p := pdfProfile("HP")
 	if len(p.NativeFormats) != 1 || p.NativeFormats[0] != dp.DevicePDF {
 		t.Errorf("NativeFormats = %v, want [pdf]", p.NativeFormats)
 	}
@@ -164,23 +164,30 @@ func TestPrintersManageDoesNotRaceWithRunningJobs(t *testing.T) {
 	<-done
 }
 
-// Regresión: cambiar el DPI olvidaba el perfil de la impresora, incluido el que
-// envió el Backend, y los trabajos del ERP fallaban hasta la siguiente sync.
-func TestRenderDPIChangeKeepsBackendProfile(t *testing.T) {
-	s, _, _ := newTestServer(ports.Config{Printers: []ports.ManagedPrinter{
-		{Name: "HP", Enabled: true, Kind: ports.KindPDF},
-	}})
-	profiles := &recordingProfiles{m: map[string]dp.PrinterProfile{
-		"HP": {PrinterID: "HP", NativeFormats: []dp.DeviceFormat{dp.DevicePDF}},
-	}}
-	s.d.Profiles = profiles
+// El ajuste de DPI se quitó porque nunca tuvo efecto: el panel no lo expone ni
+// lo guarda, aunque un panel antiguo (o una petición a mano) lo siga enviando.
+func TestPanelNoLongerHasRenderDPI(t *testing.T) {
+	s, saved, _ := newTestServer(ports.Config{})
+	s.d.Profiles = &recordingProfiles{m: map[string]dp.PrinterProfile{}}
+	s.d.Discovery = fakeDiscovery{names: []string{"HP"}}
 
 	manage(t, s, `{"name":"HP","enabled":true,"kind":"pdf","pageMode":"image","renderDPI":450}`)
-	if rec := postConfig(t, s, `{"renderDPI":300}`); rec.Code != http.StatusOK {
-		t.Fatalf("POST /api/config -> %d %s", rec.Code, rec.Body.String())
+	if rec := postConfig(t, s, `{"renderDPI":300,"pageMarginMM":2}`); rec.Code != http.StatusOK {
+		t.Fatalf("POST /api/config con renderDPI -> %d %s", rec.Code, rec.Body.String())
 	}
-	if profiles.writes != 0 {
-		t.Errorf("cambiar el DPI escribió %d veces en la caché", profiles.writes)
+	if saved.PageMarginMM != 2 {
+		t.Errorf("el resto del formulario no se aplicó: pageMarginMM = %v", saved.PageMarginMM)
+	}
+
+	for name, h := range map[string]func(http.ResponseWriter, *http.Request){
+		"/api/printers": s.printers,
+		"/api/config":   s.config,
+	} {
+		rec := httptest.NewRecorder()
+		h(rec, httptest.NewRequest(http.MethodGet, name, nil))
+		if strings.Contains(rec.Body.String(), "renderDPI") {
+			t.Errorf("GET %s sigue exponiendo renderDPI: %s", name, rec.Body.String())
+		}
 	}
 }
 

@@ -2,81 +2,49 @@ package ports
 
 import "testing"
 
-// Sin nada configurado se usan los defaults internos: página completa (0mm) y
-// 300 dpi.
-func TestPageTuningDefaults(t *testing.T) {
+// Sin nada configurado se usa el default interno: página completa (0 mm).
+func TestPageMarginDefault(t *testing.T) {
 	var c Config
-	margin, dpi := c.PageTuning("cualquiera")
-	if margin != DefaultPageMarginMM {
-		t.Errorf("margen = %v; se esperaba %v", margin, DefaultPageMarginMM)
-	}
-	if dpi != DefaultRenderDPI {
-		t.Errorf("dpi = %d; se esperaba %d", dpi, DefaultRenderDPI)
+	if m := c.PageMargin("cualquiera"); m != DefaultPageMarginMM {
+		t.Errorf("margen = %v; se esperaba %v", m, DefaultPageMarginMM)
 	}
 }
 
-// El default global aplica a las impresoras que no traen override propio.
-func TestPageTuningGlobal(t *testing.T) {
-	c := Config{PageMarginMM: 12, RenderDPI: 600}
-	margin, dpi := c.PageTuning("sin-override")
-	if margin != 12 || dpi != 600 {
-		t.Errorf("(%v, %d); se esperaba (12, 600)", margin, dpi)
-	}
-}
-
-// El override por impresora gana al default global, campo a campo.
-func TestPageTuningOverridePorImpresora(t *testing.T) {
+// El default global aplica a las impresoras que no traen override propio, y el
+// override por impresora gana al global.
+func TestPageMarginOverridePorImpresora(t *testing.T) {
 	c := Config{
 		PageMarginMM: 12,
-		RenderDPI:    600,
 		Printers: []ManagedPrinter{
-			{Name: "HP Laser", Kind: KindPDF, PageMarginMM: 5}, // solo margen
-			{Name: "Otra", Kind: KindPDF, RenderDPI: 150},      // solo dpi
-			{Name: "Ambos", Kind: KindPDF, PageMarginMM: 3, RenderDPI: 200},
+			{Name: "HP Laser", Kind: KindPDF, PageMarginMM: 5},
+			{Name: "Sin margen propio", Kind: KindPDF},
 		},
 	}
-	casos := []struct {
-		printer string
-		margin  float64
-		dpi     int
-	}{
-		{"HP Laser", 5, 600}, // margen propio, dpi global
-		{"Otra", 12, 150},    // margen global, dpi propio
-		{"Ambos", 3, 200},    // ambos propios
-		{"Desconocida", 12, 600},
-	}
-	for _, k := range casos {
-		m, d := c.PageTuning(k.printer)
-		if m != k.margin || d != k.dpi {
-			t.Errorf("%s: (%v, %d); se esperaba (%v, %d)", k.printer, m, d, k.margin, k.dpi)
+	for printer, want := range map[string]float64{
+		"HP Laser":          5,
+		"Sin margen propio": 12,
+		"Desconocida":       12,
+	} {
+		if m := c.PageMargin(printer); m != want {
+			t.Errorf("%s: margen = %v; se esperaba %v", printer, m, want)
 		}
-	}
-}
-
-// Un DPI negativo o cero en la config no debe propagarse al rasterizador: cae al
-// default interno.
-func TestPageTuningDPIInvalido(t *testing.T) {
-	c := Config{RenderDPI: -50}
-	if _, dpi := c.PageTuning("x"); dpi != DefaultRenderDPI {
-		t.Errorf("dpi = %d; se esperaba el default %d", dpi, DefaultRenderDPI)
 	}
 }
 
 // La calibración del corte y la de página son independientes: tocar una no debe
 // alterar la otra.
-func TestPageTuningNoInterfiereConElCorte(t *testing.T) {
+func TestPageMarginNoInterfiereConElCorte(t *testing.T) {
 	c := Config{
 		CutFeedDots: 248, TopMarginDots: 12,
-		PageMarginMM: 8, RenderDPI: 400,
-		Printers: []ManagedPrinter{{Name: "XP-80", CutFeedDots: 200}},
+		PageMarginMM: 8,
+		Printers:     []ManagedPrinter{{Name: "XP-80", CutFeedDots: 200}},
 	}
 	cut, top := c.PrinterTuning("XP-80")
 	if cut != 200 || top != 12 {
 		t.Errorf("corte = (%d, %d); se esperaba (200, 12)", cut, top)
 	}
-	m, d := c.PageTuning("XP-80")
-	if m != 8 || d != 400 {
-		t.Errorf("página = (%v, %d); se esperaba (8, 400)", m, d)
+	if m := c.PageMargin("XP-80"); m != 8 {
+		t.Errorf("margen = %v; se esperaba 8", m)
 	}
 }
 

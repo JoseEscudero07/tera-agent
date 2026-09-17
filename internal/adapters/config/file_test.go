@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -106,7 +107,7 @@ func TestSaveLoad_ManagedPrintersAndPreservedFields(t *testing.T) {
 			{Name: "POS80", Role: ports.RoleFacturacion, Enabled: true, Kind: ports.KindThermal, CutFeedDots: 248, TopMarginDots: 8},
 			{Name: "Kitchen", Role: ports.RoleCocina, Enabled: false, Kind: ports.KindThermal},
 			{Name: "HP LaserJet", Role: ports.RoleFacturacion, Enabled: true, Kind: ports.KindPDF},
-			{Name: "Samsung M2020", Role: ports.RoleOficina, Enabled: true, Kind: ports.KindPDF, PageMode: ports.PageModeImage, RenderDPI: 450},
+			{Name: "Samsung M2020", Role: ports.RoleOficina, Enabled: true, Kind: ports.KindPDF, PageMode: ports.PageModeImage},
 		},
 		// Fields that Save used to drop silently.
 		DataDir:            "/var/lib/tera",
@@ -174,5 +175,40 @@ func TestPrinterTuning_PerPrinterOverridesGlobal(t *testing.T) {
 	// Unknown printer inherits globals.
 	if feed, top := cfg.PrinterTuning("Otra"); feed != 232 || top != 16 {
 		t.Errorf("unknown printer tuning = (%d,%d), want (232,16)", feed, top)
+	}
+}
+
+// Un config.yaml escrito cuando existía el ajuste de DPI (render_dpi) tiene que
+// seguir cargando: el campo se ignora y desaparece al volver a guardar.
+func TestLoad_IgnoresRemovedRenderDPI(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	old := `printer:
+  render_dpi: 450
+  page_margin_mm: 4
+  managed:
+    - name: HP
+      enabled: true
+      kind: pdf
+      render_dpi: 600
+      page_mode: image
+`
+	if err := os.WriteFile(path, []byte(old), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	store := New(path)
+	cfg, err := store.Load()
+	if err != nil {
+		t.Fatalf("un config.yaml con render_dpi ya no carga: %v", err)
+	}
+	if cfg.PageMarginMM != 4 || len(cfg.Printers) != 1 || cfg.Printers[0].PageMode != ports.PageModeImage {
+		t.Errorf("config mal leída: %+v", cfg)
+	}
+	if err := store.Save(cfg); err != nil {
+		t.Fatal(err)
+	}
+	saved, _ := os.ReadFile(path)
+	if strings.Contains(string(saved), "render_dpi") {
+		t.Errorf("render_dpi sigue en el YAML guardado:\n%s", saved)
 	}
 }

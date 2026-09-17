@@ -324,10 +324,7 @@ func buildUIServer(app *di.App) *ui.Server {
 			// reinstalar el resolutor basta para que el cambio aplique al
 			// siguiente documento sin reiniciar.
 			if app.SetPageMargin != nil {
-				app.SetPageMargin(func(printerID string) float64 {
-					marginMM, _ := c.PageTuning(printerID)
-					return marginMM
-				})
+				app.SetPageMargin(c.PageMargin)
 			}
 			// Modo vectorial/imagen: el cache de perfiles lo consulta al leer
 			// cada perfil, así que vale desde el siguiente trabajo.
