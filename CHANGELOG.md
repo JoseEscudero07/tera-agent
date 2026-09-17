@@ -4,6 +4,12 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1.0.0/).
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-09-17
+
+Instalador validado en un Windows 11 limpio (`tools/windows-vm`), en la HP
+Laser MFP 135w real (modo usuario y modo servicio) y en tres equipos de
+cliente: dos con Windows 10 y uno con Windows 11.
+
 ### Security
 - **Permisos de la carpeta de datos en Windows (endurecimiento).** El instalador
   creaba `C:\ProgramData\TeraAgent` con `Permissions: users-modify`, así que
