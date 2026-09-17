@@ -26,6 +26,10 @@ http:
 data_dir: ""         # dónde guardar estado (dedupe/pendientes); "" = por defecto del SO
 log:
   level: "info"      # debug|info|warn|error
-  file: ""           # ruta de log rotativo (además de stderr); "" = solo stderr
+  # Ruta de log rotativo (además de stderr); "" = solo stderr. Si se indica, DEBE
+  # estar dentro de data_dir: en modo servicio el agente corre como LocalSystem y
+  # un log.file arbitrario sería una vía para que escribiera fuera (escalada/DoS).
+  # El instalador la deja en <data_dir>/logs/tera-agent.log.
+  file: ""
   max_size_mb: 5     # rota al superar este tamaño
   max_backups: 3     # nº de ficheros de respaldo

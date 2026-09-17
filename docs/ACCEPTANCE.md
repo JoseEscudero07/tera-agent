@@ -82,11 +82,28 @@ Lo que ningún script puede ver por ti:
 | 5 | Panel → *Probar* | Sale un ticket de prueba **sin que parpadee ninguna ventana negra** |
 | 6 | Imprimir un documento **desde el ERP** | Llega y sale por la impresora correcta |
 | 7 | Panel → Configuración | Cambiar el token y guardar reconecta el agente |
-| 8 | Desinstalar desde *Configuración → Aplicaciones* | Desaparece el servicio/autoarranque; `C:\ProgramData\TeraAgent` se conserva |
+| 8 | Desinstalar desde *Configuración → Aplicaciones* | Desaparece el servicio/autoarranque; la carpeta de datos se conserva |
 
 En modo **servicio** el paso 2 y 3 no aplican (los servicios de Windows no pueden
 mostrar bandeja); en su lugar comprueba que el servicio `TeraAgent` está *En
-ejecución* antes de iniciar sesión.
+ejecución* antes de iniciar sesión. El registro (paso 7) NO se hace por el panel
+(deja la conexión en solo lectura): usa `tera-agent register --scope service`
+desde una consola de administrador.
+
+## 2b. Comprobaciones de seguridad (permisos)
+
+`windows-verify.ps1` ya cubre lo esencial (carpeta sin herencia y sin escritura de
+usuarios sin privilegios, config no legible por Usuarios en servicio, `log.file`
+dentro de `data_dir`, panel que rechaza POST de otro origen y registro por panel
+bloqueado en servicio). Para confirmarlo **a mano**, en modo servicio y con una
+**cuenta estándar** (no administrador):
+
+| # | Paso | Qué debe pasar |
+|---|---|---|
+| 1 | `icacls C:\ProgramData\TeraAgent` | Solo `SYSTEM` y `Administradores`; **no** debe aparecer `Usuarios`/`Users` con `(M)`/`(W)` |
+| 2 | Como usuario estándar, abrir `C:\ProgramData\TeraAgent\config.yaml` | **Acceso denegado** (el Token no es legible) |
+| 3 | Como usuario estándar, crear un fichero en la carpeta de datos | **Acceso denegado** |
+| 4 | Editar `config.yaml` a mano y poner `log.file` fuera de la carpeta | El servicio **no arranca** y deja el motivo en `startup-error.log` |
 
 ## 3. Prueba de actualización
 
@@ -102,7 +119,7 @@ Importante y fácil de olvidar: instalar la versión nueva **encima** de la ante
 Primero, estos dos ficheros:
 
 ```
-C:\ProgramData\TeraAgent\tera-agent.log        operación normal
+C:\ProgramData\TeraAgent\logs\tera-agent.log   operación normal
 C:\ProgramData\TeraAgent\startup-error.log     solo existe si el arranque falló
 ```
 

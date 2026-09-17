@@ -56,6 +56,10 @@ func main() {
 		cmdUI(args[1:])
 	case "service":
 		exitOn(cmdService(args[1:]))
+	case "setup-data":
+		exitOn(cmdSetupData(args[1:]))
+	case "register":
+		exitOn(cmdRegister(args[1:]))
 	case "version", "--version", "-v":
 		fmt.Println("tera-agent", di.AgentVersion)
 	case "help", "-h", "--help":
@@ -185,11 +189,16 @@ func cmdRaw(args []string) error {
 // When launched by the Windows Service Control Manager it runs as a service.
 func cmdRun(args []string) {
 	fs := flag.NewFlagSet("run", flag.ExitOnError)
-	configPath := fs.String("config", "config.yaml", "path to the configuration file")
+	configPath := fs.String("config", "", "path to the configuration file (overrides --scope)")
+	scope := fs.String("scope", "", "modo de despliegue: service|user (resuelve rutas y permisos)")
 	tray := fs.Bool("tray", false, "show a system-tray icon (Windows)")
 	_ = fs.Parse(args)
 
-	app, err := di.Build(*configPath)
+	path, err := prepareForRun(*configPath, *scope)
+	if err != nil {
+		fatalStartup(err)
+	}
+	app, err := di.Build(path)
 	if err != nil {
 		// No basta con stderr: el binario de la bandeja no tiene consola y el
 		// fallo sería invisible. fatalStartup lo deja en fichero y lo muestra.
@@ -202,7 +211,15 @@ func cmdRun(args []string) {
 	// Windows service: the SCM controls the lifetime.
 	if isWindowsService() {
 		ctx, cancel := context.WithCancel(context.Background())
-		if err := runWindowsService(func() { runLoop(ctx, app) }, cancel); err != nil {
+		run := func() {
+			// El servicio también sirve el panel en loopback, pero con la conexión
+			// (URL y Token) de solo lectura: deja ver el estado y calibrar sin
+			// sesión de escritorio, sin abrir una vía para reescribir el Token que
+			// solo los administradores deberían poder tocar.
+			go func() { _ = buildUIServer(app).Run(ctx, uiAddr) }()
+			runLoop(ctx, app)
+		}
+		if err := runWindowsService(run, cancel); err != nil {
 			app.Log.Error("service", "err", err)
 			os.Exit(1)
 		}
@@ -272,12 +289,17 @@ func cmdServe(args []string) {
 // browser window.
 func cmdUI(args []string) {
 	fs := flag.NewFlagSet("ui", flag.ExitOnError)
-	configPath := fs.String("config", "config.yaml", "path to the configuration file")
+	configPath := fs.String("config", "", "path to the configuration file (overrides --scope)")
+	scope := fs.String("scope", "", "modo de despliegue: service|user (resuelve rutas y permisos)")
 	addr := fs.String("addr", "127.0.0.1:9180", "UI listen address")
 	noOpen := fs.Bool("no-open", false, "do not open the browser automatically")
 	_ = fs.Parse(args)
 
-	app, err := di.Build(*configPath)
+	path, err := prepareForRun(*configPath, *scope)
+	if err != nil {
+		fatalStartup(err)
+	}
+	app, err := di.Build(path)
 	if err != nil {
 		// No basta con stderr: el binario de la bandeja no tiene consola y el
 		// fallo sería invisible. fatalStartup lo deja en fichero y lo muestra.
@@ -314,10 +336,11 @@ func buildUIServer(app *di.App) *ui.Server {
 		Profiles:   app.Profiles,
 		Cfg:        app.Cfg,
 		Version:    di.AgentVersion,
-		DataDir:    app.DataDir,
-		RunMode:    runMode(),
-		Log:        app.Log,
-		SaveConfig: app.SaveConfig,
+		DataDir:      app.DataDir,
+		RunMode:      runMode(),
+		ConnReadOnly: panelConnReadOnly,
+		Log:          app.Log,
+		SaveConfig:   app.SaveConfig,
 		ApplyTuning: func(c ports.Config) {
 			app.Engine.SetTuning(c.PrinterTuning)
 			// Margen de página: el driver GDI lo lee en cada trabajo, así que

@@ -4,6 +4,41 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1.0.0/).
 
 ## [Unreleased]
 
+### Security
+- **Permisos de la carpeta de datos en Windows (endurecimiento).** El instalador
+  creaba `C:\ProgramData\TeraAgent` con `Permissions: users-modify`, así que
+  cualquier usuario local podía leer el **Token**, apuntar `server.url` a otro
+  servidor (y recibir el Token en el siguiente arranque) o fijar `log.file` a una
+  ruta arbitraria que el servicio (LocalSystem) crearía/abriría —una primitiva de
+  escalada de privilegios y de DoS—. Ahora:
+  - **Modo servicio:** la carpeta se restringe a **SYSTEM y Administradores**
+    (nuevo `adapters/fsacl`, aplicado por `tera-agent setup-data --scope service`).
+    Al arrancar, el servicio **verifica** que sigue siendo segura y se niega a
+    arrancar si no lo es. El panel del servicio deja los datos de conexión (URL y
+    Token) en **solo lectura**; el registro se hace con `tera-agent register`
+    desde una consola de administrador (Token por consola sin eco o `--token-file`,
+    nunca como argumento).
+  - **Modo app de usuario:** la configuración pasa al perfil del usuario
+    (`%LOCALAPPDATA%\TeraAgent`, `--scope user`), protegida por los permisos del
+    perfil; cada cuenta tiene su propio registro. No se usa Roaming (el Token no
+    debe viajar entre equipos).
+  - **`log.file` debe estar dentro de `data_dir`** (validado al arrancar) para que
+    la protección de la carpeta cubra también el destino del log; los logs viven
+    en `data_dir\logs\` (en servicio, legibles por Usuarios pero no escribibles).
+  - `config.yaml` inicial lo escribe ahora el propio Agent (`setup-data`), no el
+    script Pascal del instalador: desaparece el bug de las comillas dobles en
+    rutas de Windows.
+- **Panel local protegido contra CSRF y DNS rebinding.** El panel (`:9180`)
+  validaba cualquier `Origin` en el WebSocket y no comprobaba `Host` ni `Origin`
+  en las peticiones que cambian estado: una web abierta en el equipo podía hacer
+  `POST /api/config` y desviar el Token. Ahora se exige `Host` loopback con el
+  puerto del panel y, en los métodos que modifican estado, un `Origin` del propio
+  panel; el WebSocket aplica la misma comprobación.
+- `windows-verify.ps1`: comprobaciones nuevas de permisos (carpeta sin herencia y
+  sin escritura de usuarios sin privilegios, config no legible por Usuarios en
+  servicio), de que `log.file` está dentro de `data_dir`, de que el panel rechaza
+  un POST de otro origen y de que el panel del servicio rechaza el registro.
+
 ### Added
 - **Compilar el instalador desde Linux**: `scripts/build-release.sh` (Go + Docker),
   mismo resultado que `build-release.ps1`, con Inno Setup bajo Wine
