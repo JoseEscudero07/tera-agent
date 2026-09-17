@@ -22,6 +22,9 @@
 #define AppName      "Tera Agent"
 #define AppPublisher "Grupo Tera"
 #define ServiceName  "TeraAgent"
+; Valor de HKLM\...\Run que arranca la bandeja al iniciar sesión. Se declara
+; aquí porque lo escribe [Registry] y lo lee InstalledMode en [Code].
+#define RunValueName "TeraAgent"
 #define PanelURL     "http://127.0.0.1:9180"
 
 [Setup]
@@ -62,6 +65,8 @@ es.ModePageDescription=¿Cómo debe arrancar Tera Agent en este equipo?
 es.ModeUser=Al iniciar sesión de Windows, con icono en la bandeja y panel (recomendado)
 es.ModeService=Como servicio de Windows: arranca sin que nadie inicie sesión, sin icono en la bandeja
 es.ModeWarning=Elige solo una: si el agente corriera como servicio Y como aplicación de usuario a la vez, habría dos agentes conectados con el mismo Token y el ERP recibiría cada impresión duplicada.
+es.ModeKeepUser=Este equipo ya tiene Tera Agent instalado como aplicación de usuario y así se va a dejar. Cámbialo solo si sabes que quieres cambiarlo.
+es.ModeKeepService=Este equipo ya tiene Tera Agent instalado como servicio y así se va a dejar. Cámbialo solo si sabes que quieres cambiarlo.
 
 [Tasks]
 Name: "desktopicon"; Description: "Crear un acceso directo al panel en el escritorio"; GroupDescription: "Accesos directos:"
@@ -115,7 +120,7 @@ Name: "{autodesktop}\Panel de Tera Agent";  Filename: "{#PanelURL}"; IconFilenam
 ; usuario que inicia sesión (%LOCALAPPDATA%\TeraAgent), no en el del administrador
 ; que instaló. Cada cuenta tiene su propio registro; nada se comparte entre ellas.
 Root: HKLM; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; \
-  ValueType: string; ValueName: "TeraAgent"; \
+  ValueType: string; ValueName: "{#RunValueName}"; \
   ValueData: """{app}\tera-agent-tray.exe"" run --tray --scope user"; \
   Flags: uninsdeletevalue; Check: IsUserMode
 
@@ -170,6 +175,20 @@ const
   ModeUserIndex    = 0;
   ModeServiceIndex = 1;
 
+// InstalledMode dice con qué modo está ya instalado el agente en este equipo:
+// 'service' si existe el servicio, 'user' si está el autoarranque de sesión, y
+// cadena vacía si es una instalación nueva. El instalador corre en modo 64 bits
+// (ArchitecturesInstallIn64BitMode), así que lee las mismas claves que escribe.
+function InstalledMode: String;
+begin
+  if RegKeyExists(HKEY_LOCAL_MACHINE, 'SYSTEM\CurrentControlSet\Services\{#ServiceName}') then
+    Result := 'service'
+  else if RegValueExists(HKEY_LOCAL_MACHINE, 'Software\Microsoft\Windows\CurrentVersion\Run', '{#RunValueName}') then
+    Result := 'user'
+  else
+    Result := '';
+end;
+
 // Página de elección del modo. Son excluyentes a propósito (radio buttons):
 // el WebSocket contra el ERP debe tener un único dueño en el equipo.
 procedure InitializeWizard;
@@ -182,7 +201,22 @@ begin
     False);
   ModePage.Add(ExpandConstant('{cm:ModeUser}'));
   ModePage.Add(ExpandConstant('{cm:ModeService}'));
-  ModePage.Values[ModeUserIndex] := True;
+
+  // En una actualización se premarca el modo que el equipo ya tiene: instalar
+  // encima a base de "siguiente" no debe cambiarlo sin querer. Si cambiara,
+  // quedarían el servicio y la app de usuario con el mismo Token y el ERP
+  // recibiría cada impresión dos veces.
+  if InstalledMode = 'service' then
+  begin
+    ModePage.Values[ModeServiceIndex] := True;
+    ModePage.SubCaptionLabel.Caption := ExpandConstant('{cm:ModeKeepService}');
+  end
+  else
+  begin
+    ModePage.Values[ModeUserIndex] := True;
+    if InstalledMode = 'user' then
+      ModePage.SubCaptionLabel.Caption := ExpandConstant('{cm:ModeKeepUser}');
+  end;
 end;
 
 // En instalación silenciosa no hay asistente que responder, así que el modo se

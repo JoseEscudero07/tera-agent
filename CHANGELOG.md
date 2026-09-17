@@ -4,6 +4,17 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed
+- **Actualizar ya no puede cambiar el modo de ejecución sin querer.** La página
+  del asistente venía siempre marcada en "App de usuario", así que instalar la
+  versión nueva encima de un equipo que corría como servicio, a base de
+  "siguiente", lo dejaba con los dos: el servicio antiguo y la app de usuario
+  conectados con el mismo Token, y el ERP recibiendo cada impresión duplicada.
+  Ahora el instalador detecta cómo está instalado (el servicio en
+  `HKLM\SYSTEM\CurrentControlSet\Services` o el autoarranque en `HKLM\...\Run`),
+  premarca ese modo y lo dice en la propia página. También en instalación
+  silenciosa sin `/MODE`.
+
 ## [1.2.0] - 2026-09-17
 
 ### Changed
