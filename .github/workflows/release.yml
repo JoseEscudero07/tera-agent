@@ -52,13 +52,15 @@ jobs:
       #
       # El zip viene de un repositorio de terceros y sus binarios acaban
       # ejecutandose como SYSTEM en modo servicio: se verifica su SHA256 antes de
-      # descomprimir. Al subir de version, actualiza los dos valores a la vez.
+      # descomprimir. Version y hash salen de installer/poppler.env, el mismo
+      # fichero que usa scripts/build-release.sh.
       - name: Descargar poppler
         shell: pwsh
-        env:
-          POPPLER_VERSION: '26.09.0-0'
-          POPPLER_SHA256: '7a6f256a0ddf7536182246a5733331bf4677cbcc34f4663774947ad34556c8d0'
         run: |
+          Get-Content installer/poppler.env | ForEach-Object {
+            if ($_ -match '^\s*([A-Z_]+)=(.+)$') { Set-Item "env:$($Matches[1])" $Matches[2].Trim() }
+          }
+          if (-not $env:POPPLER_VERSION -or -not $env:POPPLER_SHA256) { throw "installer/poppler.env incompleto" }
           $url = "https://github.com/oschwartz10612/poppler-windows/releases/download/v$env:POPPLER_VERSION/Release-$env:POPPLER_VERSION.zip"
           Invoke-WebRequest -Uri $url -OutFile poppler.zip -UseBasicParsing
           $hash = (Get-FileHash poppler.zip -Algorithm SHA256).Hash.ToLower()

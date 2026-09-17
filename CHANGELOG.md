@@ -5,6 +5,11 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1.0.0/).
 ## [Unreleased]
 
 ### Added
+- **Compilar el instalador desde Linux**: `scripts/build-release.sh` (Go + Docker),
+  mismo resultado que `build-release.ps1`, con Inno Setup bajo Wine
+  (`installer/wine/Dockerfile`, instalador de Inno Setup verificado por SHA256).
+  Versión y hash de poppler en `installer/poppler.env`, compartido con
+  `release.yml`.
 - **Impresión vectorial en láser / inyección (Windows)** con `pdftocairo -print`
   (`driver/pdfvector`), modo por defecto. El texto llega al driver como texto y
   la impresora lo imprime a su resolución nativa; carta sale en carta y A4 en A4.

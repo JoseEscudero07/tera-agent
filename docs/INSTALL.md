@@ -157,8 +157,14 @@ obligue a volver a registrar el equipo.
 
 ### Compilar el instalador
 
-Requiere **Inno Setup 6** (una sola vez: `winget install JRSoftware.InnoSetup`) y
-el bundle de poppler para Windows.
+Desde **Linux** (Go y Docker; descarga poppler y verifica su SHA256):
+
+```bash
+scripts/build-release.sh 1.0.0
+```
+
+Desde **Windows**, requiere **Inno Setup 6** (una sola vez:
+`winget install JRSoftware.InnoSetup`) y el bundle de poppler para Windows.
 
 ```powershell
 .\scripts\build-release.ps1 -Version 1.0.0
