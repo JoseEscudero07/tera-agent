@@ -4,6 +4,8 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1.0.0/).
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-09-17
+
 ### Changed
 - **Dar de alta un equipo es pegar el Token y nada más.** La URL del servidor es
   la misma en todos los clientes, pero el `config.yaml` inicial la dejaba vacía y
