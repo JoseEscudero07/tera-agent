@@ -28,16 +28,43 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1.0.0/).
   - `config.yaml` inicial lo escribe ahora el propio Agent (`setup-data`), no el
     script Pascal del instalador: desaparece el bug de las comillas dobles en
     rutas de Windows.
-- **Panel local protegido contra CSRF y DNS rebinding.** El panel (`:9180`)
-  validaba cualquier `Origin` en el WebSocket y no comprobaba `Host` ni `Origin`
-  en las peticiones que cambian estado: una web abierta en el equipo podía hacer
-  `POST /api/config` y desviar el Token. Ahora se exige `Host` loopback con el
-  puerto del panel y, en los métodos que modifican estado, un `Origin` del propio
-  panel; el WebSocket aplica la misma comprobación.
+- **El panel local (`127.0.0.1:9180`) aceptaba peticiones de cualquier web** abierta
+  en el POS. Un `fetch` no-cors a `POST /api/config` cambiaba la URL del Backend y
+  el agente mandaba el Token a ese servidor al reconectar; un
+  `<img src=".../api/printers/drawer">` abría el cajón (y `/api/test-print`
+  imprimía). Además, el WebSocket `/ws/ui` aceptaba cualquier origen y el panel
+  era vulnerable a DNS rebinding. Ahora:
+  - solo se atiende con cabecera Host `127.0.0.1:<puerto>` o `localhost:<puerto>`
+    (403), también si se arranca con `--addr 0.0.0.0`;
+  - todo lo que cambia estado exige Origin igual al del panel (403) y
+    `Content-Type: application/json` (415);
+  - cada ruta acepta solo su método (`POST /api/test-print`,
+    `DELETE /api/printers`…); los GET a acciones ya no hacen nada;
+  - el WebSocket del panel solo acepta el Origin del propio panel;
+  - `X-Frame-Options: DENY` y `frame-ancestors 'none'` impiden meter el panel en
+    un iframe para provocar clics (clickjacking).
+- Desde el panel, `ws://` solo se admite contra el propio equipo (`localhost`,
+  `127.0.0.0/8`, `::1`): sin TLS el Token viajaría en claro por la red. Para
+  producción, `wss://`. (Editando `config.yaml` a mano `ws://` se sigue aceptando.)
+- El panel construía los controles de cada impresora con handlers inline
+  (`onchange="setKind('${nombre}',…)"`) y `esc()` solo escapaba comillas dobles:
+  un nombre de impresora con `'` o `<` rompía el JS o inyectaba HTML. Ahora las
+  filas usan `data-*` con listeners delegados, todo dato que va a `innerHTML` se
+  escapa y los toasts usan `textContent`. No queda ningún handler inline.
 - `windows-verify.ps1`: comprobaciones nuevas de permisos (carpeta sin herencia y
   sin escritura de usuarios sin privilegios, config no legible por Usuarios en
   servicio), de que `log.file` está dentro de `data_dir`, de que el panel rechaza
   un POST de otro origen y de que el panel del servicio rechaza el registro.
+- Poppler 26.02 tenía un desbordamiento de memoria en `pdftoppm`
+  (CVE-2026-10118, corregido en 26.06): un PDF manipulado podía ejecutar código,
+  como SYSTEM en modo servicio. Actualizado a 26.09.
+- `release.yml` verifica el SHA256 del zip de poppler (repositorio de terceros)
+  antes de usarlo.
+- La búsqueda de `pdftoppm`/`pdftocairo` solo acepta rutas absolutas con el nombre
+  exacto: ya no resuelve por el directorio de trabajo (`exec.ErrDot`) ni variantes
+  de PATHEXT como `pdftocairo.exe.bat`, que permitían ejecutar un binario plantado.
+- Los procesos de poppler usan `WaitDelay`: un proceso hijo del driver de
+  impresora que retenga stderr ya no deja el trabajo colgado más allá del timeout.
 
 ### Added
 - **Compilar el instalador desde Linux**: `scripts/build-release.sh` (Go + Docker),
@@ -250,18 +277,6 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1.0.0/).
   panel, un Agent corriendo como servicio lanzaba un **proceso duplicado** en vez
   de dejar que el gestor lo reiniciase. Ahora sale con código distinto de 0, que
   es lo que el SCM interpreta como fallo para aplicar la recuperación.
-
-### Security
-- Poppler 26.02 tenía un desbordamiento de memoria en `pdftoppm`
-  (CVE-2026-10118, corregido en 26.06): un PDF manipulado podía ejecutar código,
-  como SYSTEM en modo servicio. Actualizado a 26.09.
-- `release.yml` verifica el SHA256 del zip de poppler (repositorio de terceros)
-  antes de usarlo.
-- La búsqueda de `pdftoppm`/`pdftocairo` solo acepta rutas absolutas con el nombre
-  exacto: ya no resuelve por el directorio de trabajo (`exec.ErrDot`) ni variantes
-  de PATHEXT como `pdftocairo.exe.bat`, que permitían ejecutar un binario plantado.
-- Los procesos de poppler usan `WaitDelay`: un proceso hijo del driver de
-  impresora que retenga stderr ya no deja el trabajo colgado más allá del timeout.
 
 ### Added (histórico)
 - Scaffold inicial con Clean Architecture (domain / app / adapters / infra).

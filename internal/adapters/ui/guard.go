@@ -1,82 +1,73 @@
 package ui
 
 import (
+	"fmt"
+	"mime"
 	"net"
 	"net/http"
-	"net/url"
+	"strings"
+
+	gws "github.com/gorilla/websocket"
 )
 
-// El panel escucha siempre en loopback (127.0.0.1:9180), pero eso NO basta para
-// protegerlo del navegador: cualquier página web abierta en el mismo equipo
-// puede lanzarle peticiones (CSRF), y un dominio que resuelva a 127.0.0.1 pasa a
-// ser "same-origin" (DNS rebinding) y podría además leer las respuestas. Como el
-// panel guarda la URL del Backend y el Token, un POST malicioso a /api/config
-// bastaría para desviar el Token a un servidor del atacante.
+// guard protege el panel local de las webs que se abren en el mismo equipo. El
+// panel escucha en loopback y no tiene login, así que cualquier página que el
+// navegador del POS visite puede lanzarle peticiones:
 //
-// La defensa son dos comprobaciones que el navegador rellena y una web atacante
-// no puede falsificar:
-//   - La cabecera Host debe ser loopback con el puerto del panel. Corta el DNS
-//     rebinding: la víctima llegaría con Host "atacante.com:9180", no loopback.
-//   - En los métodos que modifican estado, el Origin debe ser el propio panel.
-//     Corta el CSRF: el navegador pone el Origin real de la web atacante, que no
-//     coincide, y una web no puede sobreescribirlo.
-
-// loopbackHost indica si h (un hostname sin puerto) apunta al propio equipo.
-func loopbackHost(h string) bool {
-	if h == "localhost" {
-		return true
-	}
-	ip := net.ParseIP(h)
-	return ip != nil && ip.IsLoopback()
+//   - CSRF: un fetch no-cors con Content-Type text/plain cambiaba la URL del
+//     Backend y el agente mandaba el Token a otro servidor al reconectar.
+//   - DNS rebinding: un dominio que resuelve a 127.0.0.1 pasa a ser "mismo
+//     origen" para el navegador y puede leer y escribir la API.
+//
+// La cabecera Host frena el rebinding (el navegador manda el dominio del
+// atacante); Origin y Content-Type JSON frenan el CSRF, porque el navegador los
+// pone siempre en peticiones que no son GET/HEAD y un JSON cruzado exige un
+// preflight que el panel nunca responde. Las acciones por GET (imprimir, abrir el
+// cajón) se cierran aparte, con métodos por ruta en routes.
+type guard struct {
+	hosts map[string]struct{} // Host aceptados, en minúsculas y con puerto
 }
 
-// hostHeaderAllowed valida la cabecera Host: loopback y, si el panel conoce su
-// puerto, el mismo puerto. Sin puerto conocido (addr no parseable) se exige solo
-// que sea loopback.
-func (s *Server) hostHeaderAllowed(host string) bool {
-	h, p, err := net.SplitHostPort(host)
-	if err != nil {
-		// Host sin puerto: solo válido si el panel tampoco tiene puerto conocido.
-		return s.port == "" && loopbackHost(host)
+// newGuard deriva la lista blanca de Host del puerto en el que escucha el panel:
+// solo nombres de loopback. Aunque se arranque con --addr 0.0.0.0, el panel no
+// tiene autenticación y no debe responder a la red.
+func newGuard(addr string) (guard, error) {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil || port == "" {
+		return guard{}, fmt.Errorf("dirección del panel inválida %q: %v", addr, err)
 	}
-	if s.port != "" && p != s.port {
-		return false
+	hosts := map[string]struct{}{
+		net.JoinHostPort("localhost", port): {},
+		net.JoinHostPort("127.0.0.1", port): {},
 	}
-	return loopbackHost(h)
+	if isLoopbackHost(host) {
+		hosts[strings.ToLower(net.JoinHostPort(host, port))] = struct{}{}
+	}
+	return guard{hosts: hosts}, nil
 }
 
-// originAllowed valida el Origin de una petición que modifica estado: debe ser
-// http(s) hacia el propio panel (loopback + mismo puerto).
-func (s *Server) originAllowed(origin string) bool {
-	if origin == "" {
-		return false
-	}
-	u, err := url.Parse(origin)
-	if err != nil || (u.Scheme != "http" && u.Scheme != "https") {
-		return false
-	}
-	if s.port != "" && u.Port() != s.port {
-		return false
-	}
-	return loopbackHost(u.Hostname())
-}
-
-// guard envuelve el mux del panel con las comprobaciones anti-CSRF. Los métodos
-// seguros (GET/HEAD) solo validan el Host; los que modifican estado exigen
-// además un Origin del propio panel.
-func (s *Server) guard(next http.Handler) http.Handler {
+// wrap aplica las comprobaciones a todas las peticiones antes de enrutarlas.
+func (g guard) wrap(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !s.hostHeaderAllowed(r.Host) {
-			http.Error(w, "host no permitido", http.StatusForbidden)
+		h := w.Header()
+		// Sin esto, otra web puede cargar el panel en un iframe y hacer que el
+		// operador pulse "Desvincular" o "Quitar" creyendo que pulsa otra cosa: la
+		// petición saldría del propio panel y pasaría Host y Origin.
+		h.Set("X-Frame-Options", "DENY")
+		h.Set("Content-Security-Policy", "frame-ancestors 'none'")
+		h.Set("X-Content-Type-Options", "nosniff")
+
+		if !g.allowedHost(r) {
+			writeErrStatus(w, http.StatusForbidden, "host no permitido")
 			return
 		}
-		switch r.Method {
-		case http.MethodGet, http.MethodHead, http.MethodOptions:
-			// Seguros: no cambian estado. El WebSocket entra por aquí (GET) y
-			// valida su propio Origin en checkWSOrigin.
-		default:
-			if !s.originAllowed(r.Header.Get("Origin")) {
-				http.Error(w, "origen no permitido", http.StatusForbidden)
+		if !isSafeMethod(r.Method) {
+			if !g.sameOrigin(r) {
+				writeErrStatus(w, http.StatusForbidden, "origen no permitido")
+				return
+			}
+			if !isJSON(r) {
+				writeErrStatus(w, http.StatusUnsupportedMediaType, "se requiere Content-Type application/json")
 				return
 			}
 		}
@@ -84,14 +75,45 @@ func (s *Server) guard(next http.Handler) http.Handler {
 	})
 }
 
-// checkWSOrigin es el CheckOrigin del upgrade del WebSocket del panel. Un cliente
-// no-navegador (sin Origin) se acepta; un navegador debe traer el Origin del
-// propio panel. Antes se aceptaba cualquier origen, lo que permitía a una web
-// abrir el WebSocket del panel de la víctima.
-func (s *Server) checkWSOrigin(r *http.Request) bool {
-	o := r.Header.Get("Origin")
-	if o == "" {
+// upgrader acepta el WebSocket del panel solo desde el propio panel. El handshake
+// es un GET, así que wrap no mira su Origin: lo hace CheckOrigin.
+func (g guard) upgrader() gws.Upgrader {
+	return gws.Upgrader{CheckOrigin: g.sameOrigin}
+}
+
+func (g guard) allowedHost(r *http.Request) bool {
+	_, ok := g.hosts[strings.ToLower(r.Host)]
+	return ok
+}
+
+// sameOrigin exige una cabecera Origin idéntica al origen del panel. Una petición
+// sin Origin (o con "null") se rechaza: los navegadores la mandan siempre en
+// POST, DELETE y en el handshake WebSocket.
+func (g guard) sameOrigin(r *http.Request) bool {
+	if !g.allowedHost(r) {
+		return false
+	}
+	scheme := "http"
+	if r.TLS != nil {
+		scheme = "https"
+	}
+	return strings.EqualFold(r.Header.Get("Origin"), scheme+"://"+r.Host)
+}
+
+func isSafeMethod(m string) bool {
+	return m == http.MethodGet || m == http.MethodHead
+}
+
+func isJSON(r *http.Request) bool {
+	mt, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	return err == nil && mt == "application/json"
+}
+
+// isLoopbackHost indica si host (sin puerto ni corchetes) es el propio equipo.
+func isLoopbackHost(host string) bool {
+	if strings.EqualFold(host, "localhost") {
 		return true
 	}
-	return s.originAllowed(o)
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }

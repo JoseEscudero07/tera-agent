@@ -174,8 +174,11 @@ func TestUnregisterClearsCredentials(t *testing.T) {
 func TestValidateBackendURL(t *testing.T) {
 	ok := []string{
 		"wss://api.grupotera.cloud/ws/agent/",
-		"ws://localhost:8000/ws/agent/",
 		"wss://erp.example.com:8443/ws/agent/",
+		// ws:// solo en desarrollo, contra el propio equipo (mock-server, runserver).
+		"ws://localhost:8000/ws/agent/",
+		"ws://127.0.0.1:8765",
+		"ws://[::1]:8000/ws/agent/",
 	}
 	for _, u := range ok {
 		if err := validateBackendURL(u); err != nil {
@@ -186,7 +189,13 @@ func TestValidateBackendURL(t *testing.T) {
 		"https://erp.example.com/ws/agent/", // esquema HTTP, no WebSocket
 		"erp.example.com/ws/agent/",         // sin esquema
 		"wss://",                            // sin host
+		"wss://:443/ws/",                    // puerto sin host
 		"",
+		// ws:// hacia la red mandaría el Token en claro.
+		"ws://erp.example.com/ws/agent/",
+		"ws://192.168.1.10:8765",
+		"ws://localhost.evil.example/ws/",
+		"ws://127.0.0.1.nip.io/ws/",
 	}
 	for _, u := range bad {
 		if err := validateBackendURL(u); err == nil {

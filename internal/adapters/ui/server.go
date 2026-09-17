@@ -9,7 +9,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/fs"
-	"net"
 	"net/http"
 	"net/url"
 	"os/exec"
@@ -68,9 +67,6 @@ type Deps struct {
 // Server is the UI HTTP server.
 type Server struct {
 	d Deps
-	// port es el puerto en el que escucha el panel, para validar las cabeceras
-	// Host y Origin contra CSRF. Se fija en Run a partir de la dirección real.
-	port string
 }
 
 // New builds the UI server.
@@ -78,28 +74,11 @@ func New(d Deps) *Server { return &Server{d: d} }
 
 // Run serves the UI until ctx is cancelled.
 func (s *Server) Run(ctx context.Context, addr string) error {
-	sub, _ := fs.Sub(webFS, "web")
-	mux := http.NewServeMux()
-	mux.Handle("/", http.FileServer(http.FS(sub)))
-	mux.HandleFunc("/api/status", s.status)
-	mux.HandleFunc("/api/printers", s.printers)
-	mux.HandleFunc("/api/printers/manage", s.printersManage)
-	mux.HandleFunc("/api/printers/default", s.printersDefault)
-	mux.HandleFunc("/api/printers/drawer", s.printersDrawer)
-	mux.HandleFunc("/api/history", s.history)
-	mux.HandleFunc("/api/logs", s.logs)
-	mux.HandleFunc("/api/test-print", s.testPrint)
-	mux.HandleFunc("/api/config", s.config)
-	mux.HandleFunc("/api/register", s.register)
-	mux.HandleFunc("/api/unregister", s.unregister)
-	mux.HandleFunc("/api/open-data", s.openData)
-	mux.HandleFunc("/ws/ui", s.ws)
-
-	// El puerto real alimenta las comprobaciones anti-CSRF (Host/Origin).
-	if _, p, err := net.SplitHostPort(addr); err == nil {
-		s.port = p
+	g, err := newGuard(addr)
+	if err != nil {
+		return err
 	}
-	srv := &http.Server{Addr: addr, Handler: s.guard(mux), ReadHeaderTimeout: 10 * time.Second}
+	srv := &http.Server{Addr: addr, Handler: s.routes(g), ReadHeaderTimeout: 10 * time.Second}
 	go func() {
 		<-ctx.Done()
 		c, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -113,6 +92,32 @@ func (s *Server) Run(ctx context.Context, addr string) error {
 	return nil
 }
 
+// routes registra cada ruta con su método. Sin método, un simple
+// <img src="http://127.0.0.1:9180/api/printers/drawer"> en cualquier web abría el
+// cajón (o imprimía, o abría el Explorador): los GET no llevan Origin y guard no
+// puede distinguirlos del panel. El mux responde 405 al resto de métodos.
+func (s *Server) routes(g guard) http.Handler {
+	sub, _ := fs.Sub(webFS, "web")
+	mux := http.NewServeMux()
+	mux.Handle("GET /", http.FileServer(http.FS(sub)))
+	mux.HandleFunc("GET /api/status", s.status)
+	mux.HandleFunc("GET /api/printers", s.printers)
+	mux.HandleFunc("DELETE /api/printers", s.printers)
+	mux.HandleFunc("POST /api/printers/manage", s.printersManage)
+	mux.HandleFunc("POST /api/printers/default", s.printersDefault)
+	mux.HandleFunc("POST /api/printers/drawer", s.printersDrawer)
+	mux.HandleFunc("GET /api/history", s.history)
+	mux.HandleFunc("GET /api/logs", s.logs)
+	mux.HandleFunc("POST /api/test-print", s.testPrint)
+	mux.HandleFunc("GET /api/config", s.config)
+	mux.HandleFunc("POST /api/config", s.config)
+	mux.HandleFunc("POST /api/register", s.register)
+	mux.HandleFunc("POST /api/unregister", s.unregister)
+	mux.HandleFunc("POST /api/open-data", s.openData)
+	mux.Handle("GET /ws/ui", s.ws(g.upgrader()))
+	return g.wrap(mux)
+}
+
 func (s *Server) status(w http.ResponseWriter, _ *http.Request) {
 	id, ts := s.d.Info.Snapshot()
 	// Un equipo se considera registrado solo si tiene Token *y* URL del servidor:
@@ -122,15 +127,15 @@ func (s *Server) status(w http.ResponseWriter, _ *http.Request) {
 		"registered":   s.d.Cfg.Token != "" && s.d.Cfg.BackendURL != "",
 		"connReadOnly": s.d.ConnReadOnly,
 		"state":        string(s.d.Machine.Current()),
-		"empresa":    id.Empresa,
-		"sede":       id.Sucursal,
-		"equipo":     firstNonEmpty(id.Equipo, s.d.Cfg.AgentID),
-		"agentId":    s.d.Cfg.AgentID,
-		"lastSync":   humanSince(ts),
-		"version":    s.d.Version,
-		"os":         runtime.GOOS,
-		"dataDir":    s.d.DataDir,
-		"serverUrl":  s.d.Cfg.BackendURL,
+		"empresa":      id.Empresa,
+		"sede":         id.Sucursal,
+		"equipo":       firstNonEmpty(id.Equipo, s.d.Cfg.AgentID),
+		"agentId":      s.d.Cfg.AgentID,
+		"lastSync":     humanSince(ts),
+		"version":      s.d.Version,
+		"os":           runtime.GOOS,
+		"dataDir":      s.d.DataDir,
+		"serverUrl":    s.d.Cfg.BackendURL,
 		// Defaults globales de calibración (0 = usar el default interno del agente).
 		"cutFeedDots":   s.d.Cfg.CutFeedDots,
 		"topMarginDots": s.d.Cfg.TopMarginDots,
@@ -648,10 +653,15 @@ func validateBackendURL(raw string) error {
 	switch u.Scheme {
 	case "wss", "ws":
 	default:
-		return fmt.Errorf("la URL debe empezar por wss:// (o ws:// en desarrollo), no %q", u.Scheme)
+		return fmt.Errorf("la URL debe empezar por wss:// (o ws://localhost en desarrollo), no %q", u.Scheme)
 	}
-	if u.Host == "" {
+	if u.Hostname() == "" {
 		return fmt.Errorf("la URL del servidor no incluye el host")
+	}
+	// Sin TLS el Token viaja en claro. ws:// solo tiene sentido contra un Backend
+	// de desarrollo o el mock-server en el propio equipo, nunca a través de la red.
+	if u.Scheme == "ws" && !isLoopbackHost(u.Hostname()) {
+		return fmt.Errorf("ws:// no cifra el Token: solo se admite contra localhost en desarrollo; usa wss://")
 	}
 	return nil
 }
@@ -734,15 +744,21 @@ func (s *Server) openData(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, map[string]any{"ok": true})
 }
 
-// ws pushes state changes to the UI (poll-based to avoid observer leaks).
-func (s *Server) ws(w http.ResponseWriter, r *http.Request) {
-	upgrader := gws.Upgrader{CheckOrigin: s.checkWSOrigin}
-	c, err := upgrader.Upgrade(w, r, nil)
-	if err != nil {
-		return
+// ws sirve el WebSocket del panel. El upgrader lo construye guard: antes su
+// CheckOrigin aceptaba cualquier origen, así que cualquier web podía abrirlo.
+func (s *Server) ws(up gws.Upgrader) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		c, err := up.Upgrade(w, r, nil)
+		if err != nil {
+			return // Upgrade ya respondió (403 si el origen no es el panel)
+		}
+		defer c.Close()
+		s.pushState(c)
 	}
-	defer c.Close()
+}
 
+// pushState pushes state changes to the UI (poll-based to avoid observer leaks).
+func (s *Server) pushState(c *gws.Conn) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
@@ -779,8 +795,12 @@ func writeJSON(w http.ResponseWriter, v any) {
 }
 
 func writeErr(w http.ResponseWriter, msg string) {
+	writeErrStatus(w, http.StatusBadGateway, msg)
+}
+
+func writeErrStatus(w http.ResponseWriter, status int, msg string) {
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusBadGateway)
+	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(map[string]any{"error": msg})
 }
 

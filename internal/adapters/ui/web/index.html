@@ -197,7 +197,7 @@
         <div class="card">
           <h2>Impresoras</h2>
           <div class="plist" id="printers-mini"></div>
-          <div class="mt"><button class="btn primary" id="testBtn" onclick="testPrint()">Probar impresión</button></div>
+          <div class="mt"><button class="btn primary" id="testBtn">Probar impresión</button></div>
         </div>
       </section>
 
@@ -216,7 +216,7 @@
           <h2>Historial de impresiones</h2>
           <table><thead><tr><th>Fecha</th><th>Documento</th><th>Impresora</th><th>Estado</th></tr></thead>
           <tbody id="hist-body"></tbody></table>
-          <div class="mt"><button class="btn ghost" onclick="clearHistory()">Limpiar historial</button></div>
+          <div class="mt"><button class="btn ghost" id="clearHistBtn">Limpiar historial</button></div>
         </div>
       </section>
 
@@ -248,9 +248,9 @@
             <span class="muted" style="font-size:12px">Margen 0 = la página se imprime completa, 1:1 con el papel; la impresora recorta su margen físico (≈4 mm), que no se puede evitar.</span>
           </div>
           <div class="field"><label>Carpeta de datos</label>
-            <div style="display:flex;gap:8px"><input class="input" id="c-data" readonly><button class="btn" onclick="openData()">📂</button></div>
+            <div style="display:flex;gap:8px"><input class="input" id="c-data" readonly><button class="btn" id="openDataBtn">📂</button></div>
           </div>
-          <button class="btn primary" onclick="saveConfig()">Guardar cambios</button>
+          <button class="btn primary" id="saveCfgBtn">Guardar cambios</button>
         </div>
 
         <div class="card mt" style="max-width:560px">
@@ -258,7 +258,7 @@
           <p class="muted">Borra el token y la URL del servidor de este equipo y vuelve a la
             pantalla de registro. Úsalo para mover el equipo a otro servidor o si el token
             dejó de ser válido. No borra las impresoras configuradas.</p>
-          <button class="btn danger mt" onclick="unregister()">Desvincular este equipo</button>
+          <button class="btn danger mt" id="unregisterBtn">Desvincular este equipo</button>
         </div>
       </section>
 
@@ -282,7 +282,7 @@
     <p class="muted mt">Este equipo aún no está vinculado a un servidor Tera ERP.</p>
     <div class="field mt" style="text-align:left"><label>URL del servidor</label><input class="input" id="reg-url" placeholder="wss://api.grupotera.cloud/ws/agent/"></div>
     <div class="field" style="text-align:left"><label>Token de registro</label><input class="input" id="reg-token" placeholder="Pega aquí el token del ERP"></div>
-    <button class="btn primary" style="width:100%" onclick="registrar()">Registrar Agente</button>
+    <button class="btn primary" style="width:100%" id="registerBtn">Registrar Agente</button>
     <p class="muted mt" style="font-size:12px">Escanear código QR (próximamente)</p>
     <p class="muted" style="font-size:12px">Versión <span class="v-ver">1.0.0</span> · <span class="v-os">—</span></p>
   </div>
@@ -345,19 +345,24 @@ const DEMO={
   history:[{date:'20/07 10:43',doc:'FV-000254',printer:'POS80',status:'COMPLETADO'},{date:'20/07 10:38',doc:'FV-253',printer:'POS80',status:'COMPLETADO'},{date:'20/07 10:31',doc:'FV-252',printer:'HP',status:'COMPLETADO'},{date:'20/07 10:20',doc:'FV-251',printer:'POS80',status:'FALLIDO'}]
 };
 let DEMO_MODE=false;
-async function api(path,opts){
-  try{const r=await fetch(path,opts);if(!r.ok)throw 0;return await r.json();}
+// api: solo lecturas (GET). Todo lo que cambia estado va por send().
+async function api(path){
+  try{const r=await fetch(path);if(!r.ok)throw 0;return await r.json();}
   catch(e){DEMO_MODE=true;return null;}
 }
-// post: como api() pero SIN tragarse el error — devuelve {ok,status,data,error}
-// para poder mostrar el motivo real de un fallo (impresión, cajón, etc.).
-async function post(path,body){
+// send: para todo lo que cambia estado. Siempre con Content-Type JSON: el agente
+// rechaza (415) lo que no lo lleve, que es lo que impide que otra web lance estas
+// peticiones con un fetch no-cors. No se traga el error: devuelve
+// {ok,status,data,error} para mostrar el motivo real de un fallo.
+async function send(method,path,body){
   try{
-    const r=await fetch(path,{method:'POST',headers:body?{'Content-Type':'application/json'}:undefined,body:body?JSON.stringify(body):undefined});
+    const r=await fetch(path,{method,headers:{'Content-Type':'application/json'},body:JSON.stringify(body??{})});
     let data=null; try{data=await r.json();}catch(_){}
     return {ok:r.ok,status:r.status,data,error:data&&data.error};
   }catch(e){return {ok:false,error:'sin conexión con el agente'};}
 }
+const post=(path,body)=>send('POST',path,body);
+const errMsg=r=>r.error||('Error '+(r.status||''));
 
 function fmtSync(s){return s||'—';}
 function setStatus(state){
@@ -426,18 +431,26 @@ let PRINTERS=[]; // última lista cargada (para leer estado actual en las accion
 // Defaults globales de calibración (para los placeholders); se refrescan en loadStatus.
 const DEFAULTS={cutFeedDots:232,topMarginDots:16,pageMarginMM:0};
 const pdot=s=>s==='READY'?'green':(s==='OFFLINE'||s==='ERROR'?'red':'amber');
-const esc=s=>String(s).replace(/"/g,'&quot;');
+// Escapa texto para HTML (contenido o atributo entre comillas). Todo dato que no
+// sea una constante de este fichero pasa por aquí antes de ir a innerHTML: los
+// nombres de impresora los pone el sistema y pueden llevar ' " < o &.
+const ESC={'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'};
+const esc=s=>String(s??'').replace(/[&<>"']/g,ch=>ESC[ch]);
 
 // Fila compacta (Estado): solo lectura.
 function printerRow(p){
   const st=P_STATUS[p.status]||'—';
-  return `<div class="pitem"><span class="dot ${pdot(p.status)}"></span><span class="name">${p.name}</span>${p.default?'<span class="tag">Predeterminada</span>':''}<span class="status">${st}</span></div>`;
+  return `<div class="pitem"><span class="dot ${pdot(p.status)}"></span><span class="name">${esc(p.name)}</span>${p.default?'<span class="tag">Predeterminada</span>':''}<span class="status">${st}</span></div>`;
 }
 
 // Fila gestionable (Impresoras): activar/desactivar, tipo, rol, calibración, acciones.
 // El tipo decide qué controles tienen sentido: la calibración de corte y el
 // botón "Cajón" son sólo para térmicas; en láser/PDF se ocultan para no
 // confundir (y así también evitamos mandar ESC/POS a una láser sin querer).
+// Sin handlers inline: cada control lleva data-act (y data-field) y la fila el
+// nombre en data-name; los listeners delegados de #printers-full lo leen con
+// dataset. Antes el nombre iba dentro de onclick="…('${n}')" y un apóstrofo
+// rompía el JS (o inyectaba código).
 function printerRowFull(p){
   const st=P_STATUS[p.status]||'—';
   const enabled=p.enabled!==false;
@@ -452,27 +465,43 @@ function printerRowFull(p){
   // tamaño real y a su propia resolución, así que mostrarlo engañaría.
   const pageModes=AGENT_OS==='windows';
   const imageCal=pageMode==='image'?`
-    <label class="cal" title="Margen desde el borde del papel, en mm. 0 o vacío = página completa (el hardware recorta su margen físico, ~4mm). Vacío = ${DEFAULTS.pageMarginMM} mm por defecto.">▭<input type="number" min="0" max="50" step="0.5" placeholder="${DEFAULTS.pageMarginMM}" value="${p.pageMarginMM||''}" onchange="setPageMargin('${n}',this.value)"></label>`:'';
+    <label class="cal" title="Margen desde el borde del papel, en mm. 0 o vacío = página completa (el hardware recorta su margen físico, ~4mm). Vacío = ${DEFAULTS.pageMarginMM} mm por defecto.">▭<input type="number" min="0" max="50" step="0.5" placeholder="${DEFAULTS.pageMarginMM}" value="${p.pageMarginMM||''}" data-act="pagemargin"></label>`:'';
   const cal=isThermal?`
-    <label class="cal" title="Avance de papel antes del corte, en dots (1mm≈8). Vacío = ${DEFAULTS.cutFeedDots} por defecto.">✂<input type="number" min="0" max="2000" placeholder="${DEFAULTS.cutFeedDots}" value="${p.cutFeedDots||''}" onchange="setCal('${n}','cutFeedDots',this.value)"></label>
-    <label class="cal" title="Margen superior a dejar, en dots. Vacío = ${DEFAULTS.topMarginDots} por defecto.">⬆<input type="number" min="0" placeholder="${DEFAULTS.topMarginDots}" value="${p.topMarginDots||''}" onchange="setCal('${n}','topMarginDots',this.value)"></label>`:`
-    ${pageModes?`<select class="sel" title="Cómo se envían los documentos a esta impresora. Vectorial: texto nítido a la resolución de la impresora. Imagen: cada página como bitmap, para drivers que den problemas con el vectorial." onchange="setPageMode('${n}',this.value)">${modeOpts}</select>`:''}${imageCal}`;
-  const drawer=isThermal?`<button class="btn" onclick="openDrawer('${n}')">Cajón</button>`:'';
-  return `<div class="prow${enabled?'':' off'}">
-    <div class="toggle sm${enabled?' on':''}" title="Activar impresora" onclick="toggleEnabled('${n}')"></div>
-    <span class="pname"><span class="dot ${pdot(p.status)}"></span>${p.name}${p.default?'<span class="tag def">Predeterminada</span>':''}</span>
-    <select class="sel" title="Tipo físico" onchange="setKind('${n}',this.value)">${kindOpts}</select>
-    <select class="sel" title="Rol" onchange="setRole('${n}',this.value)">${roleOpts}</select>
+    <label class="cal" title="Avance de papel antes del corte, en dots (1mm≈8). Vacío = ${DEFAULTS.cutFeedDots} por defecto.">✂<input type="number" min="0" max="2000" placeholder="${DEFAULTS.cutFeedDots}" value="${p.cutFeedDots||''}" data-act="cal" data-field="cutFeedDots"></label>
+    <label class="cal" title="Margen superior a dejar, en dots. Vacío = ${DEFAULTS.topMarginDots} por defecto.">⬆<input type="number" min="0" placeholder="${DEFAULTS.topMarginDots}" value="${p.topMarginDots||''}" data-act="cal" data-field="topMarginDots"></label>`:`
+    ${pageModes?`<select class="sel" title="Cómo se envían los documentos a esta impresora. Vectorial: texto nítido a la resolución de la impresora. Imagen: cada página como bitmap, para drivers que den problemas con el vectorial." data-act="pagemode">${modeOpts}</select>`:''}${imageCal}`;
+  const drawer=isThermal?`<button class="btn" data-act="drawer">Cajón</button>`:'';
+  return `<div class="prow${enabled?'':' off'}" data-name="${n}">
+    <div class="toggle sm${enabled?' on':''}" title="Activar impresora" data-act="toggle"></div>
+    <span class="pname"><span class="dot ${pdot(p.status)}"></span>${n}${p.default?'<span class="tag def">Predeterminada</span>':''}</span>
+    <select class="sel" title="Tipo físico" data-act="kind">${kindOpts}</select>
+    <select class="sel" title="Rol" data-act="role">${roleOpts}</select>
     ${cal}
     <span class="status muted" style="font-size:12.5px">${st}</span>
     <div class="acts">
-      ${p.default?'':`<button class="btn" onclick="setDefault('${n}')">Predeterminar</button>`}
-      <button class="btn" onclick="testPrinter('${n}')">Probar</button>
+      ${p.default?'':`<button class="btn" data-act="default">Predeterminar</button>`}
+      <button class="btn" data-act="test">Probar</button>
       ${drawer}
-      <button class="btn danger" onclick="removePrinter('${n}')">Quitar</button>
+      <button class="btn danger" data-act="remove">Quitar</button>
     </div>
   </div>`;
 }
+// Acciones de las filas. Delegadas en el contenedor, así sobreviven a cada
+// re-render de loadPrinters sin volver a enlazarlas. Firma común: (nombre, valor
+// del control, data-field).
+const CLICK_ACTS={toggle:toggleEnabled,default:setDefault,test:testPrinter,drawer:openDrawer,remove:removePrinter};
+const CHANGE_ACTS={kind:setKind,role:setRole,pagemode:setPageMode,pagemargin:setPageMargin,
+  cal:(name,value,field)=>setCal(name,field,value)};
+function onPrinterEvent(acts){
+  return e=>{
+    const el=e.target.closest('[data-act]');
+    if(!el||!Object.prototype.hasOwnProperty.call(acts,el.dataset.act)) return;
+    acts[el.dataset.act](el.closest('.prow').dataset.name,el.value,el.dataset.field);
+  };
+}
+const printersFull=document.getElementById('printers-full');
+printersFull.addEventListener('click',onPrinterEvent(CLICK_ACTS));
+printersFull.addEventListener('change',onPrinterEvent(CHANGE_ACTS));
 async function loadPrinters(){
   const list=await api('/api/printers')||DEMO.printers;
   PRINTERS=list;
@@ -497,7 +526,8 @@ async function applyManage(name,changes){
     pageMode:p.pageMode||'vector',
     ...changes,
   };
-  await api('/api/printers/manage',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+  const r=await post('/api/printers/manage',payload);
+  if(!r.ok) toast('err','No se pudo guardar la impresora',errMsg(r));
   await loadPrinters();
 }
 function toggleEnabled(name){const p=findP(name);applyManage(name,{enabled:!(p.enabled!==false)});}
@@ -517,8 +547,10 @@ function setPageMargin(name,value){
   toast('ok','Ajuste guardado',`${name}: margen ${v?v+' mm':'default'}`);
 }
 async function setDefault(name){
-  await api('/api/printers/default',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name})});
-  toast('ok','Predeterminada',`${name} es ahora la impresora por defecto.`);await loadPrinters();
+  const r=await post('/api/printers/default',{name});
+  if(r.ok) toast('ok','Predeterminada',`${name} es ahora la impresora por defecto.`);
+  else toast('err','No se pudo predeterminar',errMsg(r));
+  await loadPrinters();
 }
 async function testPrinter(name){
   const r=await post('/api/test-print',{name});
@@ -532,15 +564,17 @@ async function openDrawer(name){
 }
 async function removePrinter(name){
   if(!confirm(`¿Quitar "${name}" de las impresoras gestionadas?`))return;
-  await api('/api/printers?name='+encodeURIComponent(name),{method:'DELETE'});
-  toast('ok','Impresora quitada',name);await loadPrinters();
+  const r=await send('DELETE','/api/printers?name='+encodeURIComponent(name));
+  if(r.ok) toast('ok','Impresora quitada',name);
+  else toast('err','No se pudo quitar',errMsg(r));
+  await loadPrinters();
 }
 async function loadHistory(){
   const h=await api('/api/history')||DEMO.history;
   const badge=s=>s==='COMPLETADO'?'<span class="badge ok">✔ Correcto</span>':(s==='FALLIDO'?'<span class="badge err">✖ Error</span>':'<span class="badge pend">• Pendiente</span>');
-  document.getElementById('hist-body').innerHTML=(h||[]).map(r=>`<tr><td>${r.date}</td><td>${r.doc}</td><td>${r.printer}</td><td>${badge(r.status)}</td></tr>`).join('')||'<tr><td colspan="4" class="muted">Sin registros.</td></tr>';
+  document.getElementById('hist-body').innerHTML=(h||[]).map(r=>`<tr><td>${esc(r.date)}</td><td>${esc(r.doc)}</td><td>${esc(r.printer)}</td><td>${badge(r.status)}</td></tr>`).join('')||'<tr><td colspan="4" class="muted">Sin registros.</td></tr>';
   const last=(h||[])[0];
-  document.getElementById('lastPrint').innerHTML=last?`<div style="font-weight:600">${last.doc}</div><div class="muted">${last.date} · ${last.printer}</div><div class="mt">${badge(last.status)}</div>`:'Sin impresiones todavía.';
+  document.getElementById('lastPrint').innerHTML=last?`<div style="font-weight:600">${esc(last.doc)}</div><div class="muted">${esc(last.date)} · ${esc(last.printer)}</div><div class="mt">${badge(last.status)}</div>`:'Sin impresiones todavía.';
 }
 async function loadLogs(){
   const d=await api('/api/logs');
@@ -598,20 +632,28 @@ async function registrar(){
   toast('ok','Registrado','El agente se está reconectando…');
   waitForAgent(); // el agente se reinicia para aplicar las credenciales
 }
-function clearHistory(){api('/api/history',{method:'DELETE'});document.getElementById('hist-body').innerHTML='<tr><td colspan="4" class="muted">Sin registros.</td></tr>';document.getElementById('lastPrint').textContent='Sin impresiones todavía.';}
-function openData(){api('/api/open-data',{method:'POST'});}
+// Solo limpia la vista: el agente aún no guarda historial, y el DELETE que se
+// mandaba no hacía nada (hoy la ruta no existe y respondería 405).
+function clearHistory(){document.getElementById('hist-body').innerHTML='<tr><td colspan="4" class="muted">Sin registros.</td></tr>';document.getElementById('lastPrint').textContent='Sin impresiones todavía.';}
+function openData(){post('/api/open-data');}
 const c=id=>document.getElementById(id).value;
 
-// toggles
+// Botones fijos. Sin onclick inline, igual que las filas de impresora.
 // (Los interruptores decorativos de Configuración se eliminaron: prometían
 // "Iniciar con Windows", "Reconectar automáticamente" y "Minimizar a la bandeja"
-// sin persistir nada. El único .toggle que queda es el de activar impresora, que
-// ya trae su propio onclick.)
+// sin persistir nada. El único .toggle que queda es el de activar impresora.)
+[['testBtn',testPrint],['clearHistBtn',clearHistory],['openDataBtn',openData],
+ ['saveCfgBtn',saveConfig],['unregisterBtn',unregister],['registerBtn',registrar]]
+  .forEach(([id,fn])=>document.getElementById(id).addEventListener('click',fn));
 
 // --- Toasts ---
+// Título y descripción van con textContent: pueden traer nombres de impresora o
+// mensajes del WebSocket.
 function toast(kind,title,desc){
   const el=document.createElement('div');el.className='toast '+kind;
-  el.innerHTML=`<div class="t">${title}</div><div class="d">${desc||''}</div>`;
+  const t=document.createElement('div');t.className='t';t.textContent=title||'';
+  const d=document.createElement('div');d.className='d';d.textContent=desc||'';
+  el.append(t,d);
   document.getElementById('toasts').appendChild(el);
   setTimeout(()=>{el.style.opacity=0;el.style.transform='translateX(12px)';setTimeout(()=>el.remove(),200);},4200);
 }
