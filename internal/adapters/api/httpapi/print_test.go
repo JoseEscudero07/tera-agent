@@ -39,7 +39,6 @@ func (c *profileStore) SetAll(ps []dp.PrinterProfile) {
 		c.m[p.PrinterID] = p
 	}
 }
-func (c *profileStore) Forget(id string) { c.writes++; delete(c.m, id) }
 
 // printSpy es un dp.Resolver que apunta con qué perfil se resolvió el último
 // trabajo, sin imprimir nada.

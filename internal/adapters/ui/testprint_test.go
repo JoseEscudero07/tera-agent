@@ -107,7 +107,7 @@ func TestProbarKeepsBackendPDFProfile(t *testing.T) {
 				t.Errorf("Probar envió %q; a una láser le toca la página PDF de prueba", spy.format)
 			}
 			assertDeviceFormats(t, "Probar", spy.profile, dp.DevicePDF)
-			if n := profiles.writes(); n != 0 {
+			if n := profiles.writes; n != 0 {
 				t.Errorf("Probar escribió %d veces en la caché de perfiles", n)
 			}
 
@@ -136,7 +136,7 @@ func TestProbarKeepsBackendThermalWidth(t *testing.T) {
 	if spy.format != dp.FormatText || spy.profile.WidthDots != 384 {
 		t.Errorf("Probar imprimió %q a %d dots, want texto a 384", spy.format, spy.profile.WidthDots)
 	}
-	if n := profiles.writes(); n != 0 || profiles.m["POS-58"].WidthDots != 384 {
+	if n := profiles.writes; n != 0 || profiles.m["POS-58"].WidthDots != 384 {
 		t.Errorf("el perfil del ERP cambió (%d escrituras): %+v", n, profiles.m["POS-58"])
 	}
 }
@@ -166,7 +166,7 @@ func TestProbarWithoutProfileUsesDeclaredKind(t *testing.T) {
 				t.Errorf("Probar imprimió %q con %+v", spy.format, spy.profile)
 			}
 			assertDeviceFormats(t, "Probar", spy.profile, c.device)
-			if len(profiles.m) != 0 || profiles.writes() != 0 {
+			if len(profiles.m) != 0 || profiles.writes != 0 {
 				t.Errorf("el perfil por defecto quedó en la caché: %v", profiles.m)
 			}
 		})
@@ -194,7 +194,7 @@ func TestDrawerDoesNotWriteProfiles(t *testing.T) {
 		t.Fatalf("abrir cajón en POS -> %d %s", rec.Code, rec.Body.String())
 	}
 	assertDeviceFormats(t, "el cajón", spy.profile, dp.DeviceESCPOS)
-	if profiles.writes() != 0 || len(profiles.m) != 1 {
+	if profiles.writes != 0 || len(profiles.m) != 1 {
 		t.Errorf("el cajón escribió en la caché: %v", profiles.m)
 	}
 }

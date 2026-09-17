@@ -569,8 +569,8 @@ func (s *Server) config(w http.ResponseWriter, r *http.Request) {
 		if dpi != 0 { // 0 = usar el default interno
 			dpi = clamp(dpi, minRenderDPI, maxRenderDPI)
 		}
-		// Sin Forget, por la misma razón que en printersManage: olvidar perfiles
-		// tiraba los del Backend.
+		// No toca la caché de perfiles, por la misma razón que printersManage:
+		// olvidar perfiles tiraba los del Backend.
 		s.d.Cfg.RenderDPI = dpi
 	}
 

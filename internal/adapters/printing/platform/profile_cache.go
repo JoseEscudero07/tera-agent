@@ -53,4 +53,3 @@ func (c *normalizingCache) ProfileOr(id string, fallback dp.PrinterProfile) dp.P
 
 func (c *normalizingCache) Set(p dp.PrinterProfile)       { c.inner.Set(p) }
 func (c *normalizingCache) SetAll(ps []dp.PrinterProfile) { c.inner.SetAll(ps) }
-func (c *normalizingCache) Forget(id string)              { c.inner.Forget(id) }

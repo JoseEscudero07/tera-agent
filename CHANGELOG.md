@@ -107,6 +107,9 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1.0.0/).
   una trampa: sobrescribía el `onclick` de cualquier `.toggle` del DOM, así que si
   hubiera llegado a ejecutarse tras renderizar la lista de impresoras habría
   dejado el interruptor de "activar impresora" siendo solo un cambio de color.
+- `ProfileCache.Forget`: se quedó sin uso cuando la caché pasó a guardar solo
+  perfiles del Backend. El único que lo llamaba era el panel al cambiar el tipo de
+  impresora, y eso tiraba el perfil del ERP.
 
 ### Fixed
 - **"Probar" (bandeja y panel) y `POST /print` ya no pisan el perfil del ERP.**

@@ -268,19 +268,6 @@ func TestNormalizingProfileCache_NilNormalizer(t *testing.T) {
 	}
 }
 
-// TestNormalizingProfileCache_ForgetPasses verifica que Forget llega al cache
-// interno; el bug sería que la traducción rompa la interfaz.
-func TestNormalizingProfileCache_ForgetPasses(t *testing.T) {
-	inner := &fakeCache{m: map[string]dp.PrinterProfile{
-		"POS": {PrinterID: "POS", NativeFormats: []dp.DeviceFormat{dp.DeviceESCPOS}},
-	}}
-	cache := NormalizingProfileCache(inner, NormalizeForGDIRaster)
-	cache.Forget("POS")
-	if _, ok := inner.m["POS"]; ok {
-		t.Fatal("Forget no propagó al cache interno")
-	}
-}
-
 // El perfil del Backend gana al respaldo y sale traducido igual que por Profile.
 // Es lo que ven "Probar" y POST /print en una láser con perfil del ERP.
 func TestNormalizingProfileCache_ProfileOrKeepsBackendProfile(t *testing.T) {
@@ -338,7 +325,6 @@ func (c *fakeCache) SetAll(ps []dp.PrinterProfile) {
 		c.m[p.PrinterID] = p
 	}
 }
-func (c *fakeCache) Forget(id string) { delete(c.m, id) }
 func (c *fakeCache) ProfileOr(id string, fallback dp.PrinterProfile) dp.PrinterProfile {
 	if p, ok := c.m[id]; ok && len(p.NativeFormats) > 0 {
 		return p

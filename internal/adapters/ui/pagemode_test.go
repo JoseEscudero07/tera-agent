@@ -26,20 +26,18 @@ func (fakeDiscovery) StatusOf(context.Context, string) (dp.Status, error) { retu
 // recordingProfiles es una caché de perfiles que cuenta las escrituras: ni un
 // cambio en el panel ni "Probar" deben tocar el perfil que envió el Backend.
 type recordingProfiles struct {
-	m       map[string]dp.PrinterProfile
-	sets    int
-	forgets []string
+	m      map[string]dp.PrinterProfile
+	writes int
 }
 
 func (c *recordingProfiles) Profile(id string) (dp.PrinterProfile, error) { return c.m[id], nil }
-func (c *recordingProfiles) Set(p dp.PrinterProfile)                      { c.sets++; c.m[p.PrinterID] = p }
+func (c *recordingProfiles) Set(p dp.PrinterProfile)                      { c.writes++; c.m[p.PrinterID] = p }
 func (c *recordingProfiles) SetAll(ps []dp.PrinterProfile) {
-	c.sets++
+	c.writes++
 	for _, p := range ps {
 		c.m[p.PrinterID] = p
 	}
 }
-func (c *recordingProfiles) Forget(id string) { c.forgets = append(c.forgets, id) }
 func (c *recordingProfiles) ProfileOr(id string, fallback dp.PrinterProfile) dp.PrinterProfile {
 	if p, ok := c.m[id]; ok && len(p.NativeFormats) > 0 {
 		return p
@@ -47,8 +45,6 @@ func (c *recordingProfiles) ProfileOr(id string, fallback dp.PrinterProfile) dp.
 	fallback.PrinterID = id
 	return fallback
 }
-
-func (c *recordingProfiles) writes() int { return c.sets + len(c.forgets) }
 
 func manage(t *testing.T, s *Server, body string) {
 	t.Helper()
@@ -79,8 +75,8 @@ func TestPrintersManagePersistsPageMode(t *testing.T) {
 	if got := saved.PageModeOf("Samsung M2020"); got != ports.PageModeVector {
 		t.Errorf("tras volver a vectorial = %q", got)
 	}
-	if len(profiles.forgets) != 0 {
-		t.Errorf("cambiar el modo olvidó perfiles %v; el cache ya aplica el modo al leer", profiles.forgets)
+	if profiles.writes != 0 {
+		t.Errorf("cambiar el modo escribió %d veces en la caché; el cache ya aplica el modo al leer", profiles.writes)
 	}
 }
 
@@ -183,8 +179,8 @@ func TestRenderDPIChangeKeepsBackendProfile(t *testing.T) {
 	if rec := postConfig(t, s, `{"renderDPI":300}`); rec.Code != http.StatusOK {
 		t.Fatalf("POST /api/config -> %d %s", rec.Code, rec.Body.String())
 	}
-	if len(profiles.forgets) != 0 {
-		t.Errorf("cambiar el DPI olvidó perfiles: %v", profiles.forgets)
+	if profiles.writes != 0 {
+		t.Errorf("cambiar el DPI escribió %d veces en la caché", profiles.writes)
 	}
 }
 
@@ -204,8 +200,8 @@ func TestKindChangeKeepsBackendProfile(t *testing.T) {
 	manage(t, s, `{"name":"XP-80","enabled":true,"kind":"thermal"}`)
 	manage(t, s, `{"name":"Sin perfil","enabled":true,"kind":"thermal"}`)
 
-	if n := profiles.writes(); n != 0 {
-		t.Errorf("cambiar el tipo escribió %d veces en la caché (forgets %v)", n, profiles.forgets)
+	if profiles.writes != 0 {
+		t.Errorf("cambiar el tipo escribió %d veces en la caché", profiles.writes)
 	}
 	if got := localProfile(s.d.Profiles, s.d.Cfg, "XP-80"); got.WidthDots != backend.WidthDots {
 		t.Errorf("XP-80 usa %+v, want el perfil del Backend", got)

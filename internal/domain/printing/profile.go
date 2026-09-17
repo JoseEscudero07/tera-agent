@@ -39,6 +39,4 @@ type ProfileCache interface {
 	FallbackProfileProvider
 	Set(PrinterProfile)      // upsert one profile
 	SetAll([]PrinterProfile) // full sync
-	// Forget descarta el perfil cacheado de una impresora concreta.
-	Forget(printerID string)
 }
