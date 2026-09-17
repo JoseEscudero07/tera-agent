@@ -45,9 +45,12 @@ tools/windows-vm/test.sh dist/TeraAgent-Setup-1.1.0.exe --mode service
 
 `test.sh` vuelve al Windows limpio y hace, en este orden:
 
-1. **Instala** en silencio y registra el Agent contra `examples/mock-server`.
+1. **Instala** en silencio y registra el Agent contra `examples/mock-server` con
+   `tera-agent register --scope user|service`, como lo haría un técnico. El
+   `config.yaml` no se edita a mano: en servicio solo lo pueden tocar SYSTEM y
+   Administradores, y en modo usuario vive en `%LOCALAPPDATA%\TeraAgent`.
 2. **Reinicia** en modo usuario, para comprobar que la bandeja arranca sola.
-3. **Pasa `scripts/windows-verify.ps1`.**
+3. **Pasa `scripts/windows-verify.ps1`** contra la carpeta de datos del modo.
 4. **Imprime en impresoras virtuales que escriben a fichero:**
    - una térmica, por `pdftoppm` y RAW;
    - una láser, con los PDF en modo vectorial;
@@ -91,7 +94,9 @@ Comprueba antes la firma con `Get-AuthenticodeSignature`.
 
 - **Impresoras:** las virtuales no tienen márgenes físicos ni drivers host-based;
   la calidad en papel se valida en una impresora real.
-- **Modo servicio:** hoy `windows-verify.ps1` marca "el panel no responde"
-  porque el servicio no sirve el panel.
+- **Modo servicio:** la láser y la impresora con tildes se omiten. "Microsoft
+  Print To PDF" deja en error los trabajos de SYSTEM, la cuenta del servicio,
+  también con un simple `Out-Printer` sin el agente. La impresión del servicio se
+  valida en una impresora real; la térmica y `windows-verify.ps1` sí se prueban.
 - **Windows 10 1809 y anteriores:** no se prueban aquí. Allí las impresoras con
   tildes caen a modo imagen.

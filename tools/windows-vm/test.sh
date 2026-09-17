@@ -12,6 +12,8 @@
 # 4. Imprime una térmica (pdftoppm) y PDFs en una láser y en una impresora con
 #    tildes en el nombre (pdftocairo), y comprueba en Linux lo que recibieron:
 #    mismas páginas, mismo tamaño de papel y sin imágenes de página completa.
+#    En modo servicio la láser se omite: Microsoft Print To PDF no acepta trabajos
+#    de SYSTEM.
 #
 # PDFs para la láser: una página carta generada a partir del testpage.pdf del
 # Agent y, si existen, los de $TERA_VM_HOME/pdfs (facturas reales del ERP, ver
@@ -43,6 +45,8 @@ done
 fails=0
 fail() { printf '\033[31m[FALLO]\033[0m %s\n' "$*"; fails=$((fails + 1)); }
 ok() { printf '\033[32m[ OK  ]\033[0m %s\n' "$*"; }
+skips=0
+skip() { printf '\033[33m[OMIT ]\033[0m %s\n' "$*"; skips=$((skips + 1)); }
 step() { printf '\n\033[36m== %s\033[0m\n' "$*"; }
 
 # --- Carpeta compartida ---------------------------------------------------------
@@ -69,8 +73,9 @@ step "Volviendo al Windows limpio"
 
 step "Instalando $(basename "$setup") (modo $mode)"
 out="$("$vm" run "& powershell -NoProfile -ExecutionPolicy Bypass -File \\\\host.lan\\Data\\guest\\install-agent.ps1 -Setup '$(basename "$setup")' -Mode $mode" 2>&1)" || true
-echo "$out" | grep -E '^INSTALLED|rror' || true
+echo "$out" | grep -E '^INSTALLED|^REGISTERED|rror' || true
 echo "$out" | grep -q '^INSTALLED tera-agent' && ok "instalado" || fail "instalación: $out"
+echo "$out" | grep -q '^REGISTERED ' && ok "registrado con tera-agent register --scope $mode" || fail "registro: $out"
 
 if [[ "$mode" == user ]]; then
   # Reinicio real: es lo que demuestra que la bandeja arranca sola al iniciar sesión.
@@ -84,7 +89,12 @@ fi
 
 # --- windows-verify.ps1 ---------------------------------------------------------
 step "windows-verify.ps1"
-verify="$("$vm" run '& powershell -NoProfile -ExecutionPolicy Bypass -File C:\Tests\windows-verify.ps1 -SkipConnection 2>&1 | Out-String' 2>&1 || true)"
+# La carpeta de datos depende del modo: en servicio, ProgramData (el valor por
+# defecto de windows-verify.ps1); en modo usuario, el perfil del usuario que
+# inicia sesión, que es el mismo con el que entra WinRM.
+data_dir='$env:ProgramData\TeraAgent'
+[[ "$mode" == user ]] && data_dir='$env:LOCALAPPDATA\TeraAgent'
+verify="$("$vm" run "& powershell -NoProfile -ExecutionPolicy Bypass -File C:\\Tests\\windows-verify.ps1 -SkipConnection -DataDir \"$data_dir\" 2>&1 | Out-String" 2>&1 || true)"
 echo "$verify" | grep -E 'FALLO|OMIT|Correctas' | sed 's/^/  /' || true
 if echo "$verify" | grep -q 'Fallos: 0'; then ok "verificación sin fallos"; else fail "windows-verify.ps1 con fallos (arriba)"; fi
 
@@ -98,52 +108,62 @@ run_jobs() { # printer port prefix docs
   "$vm" run "& powershell -NoProfile -ExecutionPolicy Bypass -File \\\\host.lan\\Data\\guest\\print-jobs.ps1 -Printer '$1' -Port '$2' -Prefix '$3' -Docs '$4'" 2>&1 || true
 }
 
-step "Láser (vectorial por defecto)"
-jobs="$(run_jobs LASER-PRUEBA 'C:\Tests\laser.pdf' laser "$docs")"
-echo "$jobs" | sed 's/^/  /'
-step "Impresora con tildes: LÁSER Facturación Ñ"
-first_doc="${docs%%,*}"
-jobs_accents="$(run_jobs 'LÁSER Facturación Ñ' 'C:\Tests\acentos.pdf' acentos "$first_doc")"
-echo "$jobs_accents" | sed 's/^/  /'
+# En modo servicio la láser no se puede comprobar con esta VM: "Microsoft Print To
+# PDF" deja en error los trabajos de SYSTEM, la cuenta del servicio (pasa igual con
+# un Out-Printer sin el agente). Se omite y no cuenta como correcta.
+if [[ "$mode" == service ]]; then
+  step "Láser e impresora con tildes"
+  skip "Microsoft Print To PDF no acepta trabajos de SYSTEM: valida la impresión del servicio en una impresora real"
+else
+  step "Láser (vectorial por defecto)"
+  jobs="$(run_jobs LASER-PRUEBA 'C:\Tests\laser.pdf' laser "$docs")"
+  echo "$jobs" | sed 's/^/  /'
+  step "Impresora con tildes: LÁSER Facturación Ñ"
+  first_doc="${docs%%,*}"
+  jobs_accents="$(run_jobs 'LÁSER Facturación Ñ' 'C:\Tests\acentos.pdf' acentos "$first_doc")"
+  echo "$jobs_accents" | sed 's/^/  /'
 
-# --- Qué recibieron las impresoras (desde Linux) -------------------------------
-step "Salida de las impresoras"
-{
-  # Nombre del papel ("letter", "A4") o, si pdfinfo no lo reconoce, medidas en
-  # puntos redondeadas: el driver de Windows redondea (595.28 -> 595.32).
-  paper() {
-    pdfinfo "$1" | awk -F': +' '/^Page size/{
-      if (match($2, /\(([^)]*)\)/)) { print substr($2, RSTART + 1, RLENGTH - 2) }
-      else { split($2, d, " "); printf "%.0f x %.0f pts\n", d[1], d[3] } }'
+  # --- Qué recibieron las impresoras (desde Linux) -------------------------------
+  step "Salida de las impresoras"
+  {
+    # Nombre del papel ("letter", "A4") o, si pdfinfo no lo reconoce, medidas en
+    # puntos redondeadas: el driver de Windows redondea (595.28 -> 595.32).
+    paper() {
+      pdfinfo "$1" | awk -F': +' '/^Page size/{
+        if (match($2, /\(([^)]*)\)/)) { print substr($2, RSTART + 1, RLENGTH - 2) }
+        else { split($2, d, " "); printf "%.0f x %.0f pts\n", d[1], d[3] } }'
+    }
+    check_output() { # prefix doc
+      local orig="$shared/pdfs/$2.pdf" got="$shared/out/$1-$2.pdf"
+      if [[ ! -f "$got" ]]; then fail "$1/$2: la impresora no recibió nada"; return; fi
+      local po pg so sg big
+      po="$(pdfinfo "$orig" | awk '/^Pages/{print $2}')"
+      pg="$(pdfinfo "$got" | awk '/^Pages/{print $2}')"
+      so="$(paper "$orig")"
+      sg="$(paper "$got")"
+      # Una imagen de más de 1000 px de ancho es una página rasterizada entera: el
+      # modo vectorial no debe producir ninguna.
+      big="$(pdfimages -list "$got" | awk 'NR>2 && $4>1000' | wc -l)"
+      if [[ "$po" == "$pg" && "$so" == "$sg" && "$big" == 0 ]]; then
+        ok "$1/$2: $pg pág, $sg, vectorial"
+      else
+        fail "$1/$2: páginas $po→$pg, papel $so→$sg, páginas rasterizadas: $big"
+      fi
+    }
+    for d in ${docs//,/ }; do
+      grep -q "^JOB $d job_completed" <<<"$jobs" || fail "láser/$d: el ERP simulado no recibió job_completed"
+      check_output laser "$d"
+    done
+    grep -q "^JOB $first_doc job_completed" <<<"$jobs_accents" || fail "acentos/$first_doc: sin job_completed"
+    check_output acentos "$first_doc"
   }
-  check_output() { # prefix doc
-    local orig="$shared/pdfs/$2.pdf" got="$shared/out/$1-$2.pdf"
-    if [[ ! -f "$got" ]]; then fail "$1/$2: la impresora no recibió nada"; return; fi
-    local po pg so sg big
-    po="$(pdfinfo "$orig" | awk '/^Pages/{print $2}')"
-    pg="$(pdfinfo "$got" | awk '/^Pages/{print $2}')"
-    so="$(paper "$orig")"
-    sg="$(paper "$got")"
-    # Una imagen de más de 1000 px de ancho es una página rasterizada entera: el
-    # modo vectorial no debe producir ninguna.
-    big="$(pdfimages -list "$got" | awk 'NR>2 && $4>1000' | wc -l)"
-    if [[ "$po" == "$pg" && "$so" == "$sg" && "$big" == 0 ]]; then
-      ok "$1/$2: $pg pág, $sg, vectorial"
-    else
-      fail "$1/$2: páginas $po→$pg, papel $so→$sg, páginas rasterizadas: $big"
-    fi
-  }
-  for d in ${docs//,/ }; do
-    grep -q "^JOB $d job_completed" <<<"$jobs" || fail "láser/$d: el ERP simulado no recibió job_completed"
-    check_output laser "$d"
-  done
-  grep -q "^JOB $first_doc job_completed" <<<"$jobs_accents" || fail "acentos/$first_doc: sin job_completed"
-  check_output acentos "$first_doc"
-}
+fi
 
 step "Resultado"
 if ((fails)); then
   printf '\033[31m%d fallo(s)\033[0m. Salidas en %s/out\n' "$fails" "$shared"
   exit 1
 fi
-printf '\033[32mTodo correcto\033[0m (modo %s). Salidas en %s/out\n' "$mode" "$shared"
+note=""
+((skips)) && note=", $skips omitida(s)"
+printf '\033[32mTodo correcto\033[0m (modo %s%s). Salidas en %s/out\n' "$mode" "$note" "$shared"

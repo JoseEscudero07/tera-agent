@@ -193,6 +193,13 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1.0.0/).
   impresora, y eso tiraba el perfil del ERP.
 
 ### Fixed
+- **`tera-agent register --scope service` no llegaba a reiniciar el servicio.**
+  `service stop` volvía en cuanto el SCM aceptaba la orden, con el servicio aún
+  parándose, y el arranque siguiente fallaba con "ya se está ejecutando una
+  instancia de este servicio": el Token quedaba guardado pero el servicio seguía
+  con la configuración anterior hasta que alguien lo reiniciaba a mano. Ahora
+  `stop` espera a que esté parado de verdad (30 s como máximo) y parar un
+  servicio ya parado no es un error. Comprobado en la VM Windows 11.
 - **"Probar" (bandeja y panel) y `POST /print` ya no pisan el perfil del ERP.**
   Instalaban un perfil ESC/POS en la caché de perfiles compartida: una láser con
   perfil `pdf` del ERP pasaba a recibir ESC/POS crudo en los trabajos del ERP hasta

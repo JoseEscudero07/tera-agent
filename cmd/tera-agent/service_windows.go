@@ -3,6 +3,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"time"
@@ -37,6 +38,39 @@ func recoveryActions() []mgr.RecoveryAction {
 		{Type: mgr.ServiceRestart, Delay: 15 * time.Second},
 		{Type: mgr.ServiceRestart, Delay: 60 * time.Second},
 	}
+}
+
+// serviceStopTimeout acota la espera a que el Agent termine de pararse. Cierra
+// la conexión con el ERP y los trabajos en curso en unos segundos; si no lo ha
+// hecho en este plazo, algo va mal y es mejor avisar que quedarse colgado.
+const serviceStopTimeout = 30 * time.Second
+
+// stopAndWait pide al SCM que pare el servicio y espera a que esté parado de
+// verdad. Control(svc.Stop) vuelve en cuanto el SCM acepta la orden, con el
+// servicio aún en StopPending: `register` arrancaba justo después, el SCM
+// respondía "ya se está ejecutando una instancia de este servicio" y el registro
+// no se aplicaba. Parar un servicio ya parado no es un error.
+func stopAndWait(s *mgr.Service) error {
+	st, err := s.Query()
+	if err != nil {
+		return err
+	}
+	if st.State == svc.Stopped {
+		return nil
+	}
+	if st.State != svc.StopPending {
+		if _, err := s.Control(svc.Stop); err != nil {
+			return err
+		}
+	}
+	err = waitFor(serviceStopTimeout, 500*time.Millisecond, func() (bool, error) {
+		st, err := s.Query()
+		return err == nil && st.State == svc.Stopped, err
+	})
+	if errors.Is(err, errWaitTimeout) {
+		return fmt.Errorf("el servicio %s no terminó de pararse en %s", serviceName, serviceStopTimeout)
+	}
+	return err
 }
 
 // isWindowsService reports whether the process was started by the Windows SCM.
@@ -148,8 +182,7 @@ func controlService(action, configPath string) error {
 			return err
 		}
 		defer s.Close()
-		_, err = s.Control(svc.Stop)
-		return err
+		return stopAndWait(s)
 
 	default:
 		return fmt.Errorf("unknown service action %q (use install|uninstall|start|stop)", action)
