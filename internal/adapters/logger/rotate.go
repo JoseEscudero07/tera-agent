@@ -64,6 +64,20 @@ func (w *rotatingWriter) Write(p []byte) (int, error) {
 	return n, err
 }
 
+// Close libera el fichero. El Agent no lo llama: vive hasta que el proceso
+// termina y el SO cierra el handle. Existe para que las pruebas puedan borrar el
+// fichero — en Windows no se puede eliminar un fichero con un handle abierto.
+func (w *rotatingWriter) Close() error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.f == nil {
+		return nil
+	}
+	err := w.f.Close()
+	w.f = nil
+	return err
+}
+
 func (w *rotatingWriter) rotate() error {
 	_ = w.f.Close()
 	if w.maxBackups <= 0 {

@@ -22,6 +22,7 @@ import (
 	"image"
 	"image/png"
 	"runtime"
+	"sync"
 	"syscall"
 	"unsafe"
 
@@ -52,6 +53,12 @@ const (
 	vertRes    = 10 // alto del área imprimible (px)
 	logPixelsX = 88 // DPI lógico horizontal
 	logPixelsY = 90 // DPI lógico vertical
+	// Geometría de la hoja completa: necesaria para medir el margen desde el
+	// borde físico del papel y no desde el área imprimible.
+	physicalWidth   = 110
+	physicalHeight  = 111
+	physicalOffsetX = 112
+	physicalOffsetY = 113
 )
 
 // StretchBltMode: COLORONCOLOR es el default de Windows y el que aceptan sin
@@ -87,11 +94,37 @@ type docInfoW struct {
 type Driver struct {
 	log ports.Logger
 	bin dp.Binarizer
+
+	// margin resuelve el margen de página (mm desde el borde físico) por
+	// impresora. Opcional: nil = ports.DefaultPageMarginMM. Protegido por mu
+	// porque el panel puede cambiarlo mientras hay trabajos imprimiendo.
+	mu     sync.RWMutex
+	margin func(printerID string) float64
 }
 
 // New devuelve el driver GDI. bin puede ser nil: sin él, el contenido en gris
 // se imprime igualmente por el camino de color (24 bpp) en vez de 1 bpp.
 func New(log ports.Logger, bin dp.Binarizer) dp.Driver { return &Driver{log: log, bin: bin} }
+
+// SetPageMargin instala el resolutor de margen por impresora (desde la config),
+// para que el cliente lo ajuste desde el panel sin recompilar. Se puede llamar en
+// caliente.
+func (d *Driver) SetPageMargin(fn func(printerID string) float64) {
+	d.mu.Lock()
+	d.margin = fn
+	d.mu.Unlock()
+}
+
+// marginFor devuelve el margen configurado para una impresora, o el default.
+func (d *Driver) marginFor(printerID string) float64 {
+	d.mu.RLock()
+	fn := d.margin
+	d.mu.RUnlock()
+	if fn == nil {
+		return 0
+	}
+	return fn(printerID)
+}
 
 func (d *Driver) Accepts(f dp.DeviceFormat) bool { return f == dp.DeviceGDIRaster }
 
@@ -174,11 +207,26 @@ func (d *Driver) renderDoc(name *uint16, printerID string, pages []image.Image, 
 	}
 	defer procDeleteDC.Call(hdc)
 
-	printableW := int32(deviceCap(hdc, horzRes))
-	printableH := int32(deviceCap(hdc, vertRes))
-	if printableW <= 0 || printableH <= 0 {
+	area := pageArea{
+		PhysW:  deviceCap(hdc, physicalWidth),
+		PhysH:  deviceCap(hdc, physicalHeight),
+		PrintW: deviceCap(hdc, horzRes),
+		PrintH: deviceCap(hdc, vertRes),
+		OffX:   deviceCap(hdc, physicalOffsetX),
+		OffY:   deviceCap(hdc, physicalOffsetY),
+		DPIX:   deviceCap(hdc, logPixelsX),
+		DPIY:   deviceCap(hdc, logPixelsY),
+	}
+	if area.PrintW <= 0 || area.PrintH <= 0 {
 		return fmt.Errorf("gdi: printer reports empty printable area")
 	}
+	marginMM := d.marginFor(printerID)
+	tx, ty, tw, th := targetRect(area, marginMM)
+	d.log.Debug("gdi page geometry",
+		"printer", printerID, "margin_mm", marginMM,
+		"physical", fmt.Sprintf("%dx%d", area.PhysW, area.PhysH),
+		"printable", fmt.Sprintf("%dx%d+%d+%d", area.PrintW, area.PrintH, area.OffX, area.OffY),
+		"target", fmt.Sprintf("%dx%d@%d,%d", tw, th, tx, ty))
 
 	docName, _ := syscall.UTF16PtrFromString("Tera Agent PDF")
 	di := docInfoW{cbSize: int32(unsafe.Sizeof(docInfoW{})), pDocName: docName}
@@ -196,7 +244,7 @@ func (d *Driver) renderDoc(name *uint16, printerID string, pages []image.Image, 
 	procSetStretchBltMode.Call(hdc, colorOnColor)
 
 	for _, pg := range pages {
-		if err := d.drawPage(hdc, pg, scaleMul, printableW, printableH); err != nil {
+		if err := d.drawPage(hdc, pg, scaleMul, tx, ty, tw, th); err != nil {
 			return err // errDIBReject u otro; el defer hace AbortDoc
 		}
 	}
@@ -205,9 +253,10 @@ func (d *Driver) renderDoc(name *uint16, printerID string, pages []image.Image, 
 }
 
 // drawPage prepara el DIB de una página (1 bpp si es gris, 24 bpp si color) al
-// factor pedido y lo pinta con UNA StretchDIBits, encajado y centrado en el
-// área imprimible conservando la proporción.
-func (d *Driver) drawPage(hdc uintptr, img image.Image, scaleMul float64, printableW, printableH int32) error {
+// factor pedido y lo pinta con UNA StretchDIBits, encajado y centrado dentro del
+// rectángulo destino (targetX/Y/W/H, ya calculado con el margen configurado)
+// conservando la proporción.
+func (d *Driver) drawPage(hdc uintptr, img image.Image, scaleMul float64, targetX, targetY, targetW, targetH int) error {
 	b := img.Bounds()
 	mono := isGrayscale(img) && d.bin != nil
 	scale := initialScale(b.Dx(), b.Dy(), mono) * scaleMul
@@ -237,7 +286,11 @@ func (d *Driver) drawPage(hdc uintptr, img image.Image, scaleMul float64, printa
 	if r, _, e := procStartPage.Call(hdc); int32(r) <= 0 {
 		return fmt.Errorf("gdi: StartPage: %v", e)
 	}
-	x, y, w, h := fitRect(int(srcW), int(srcH), int(printableW), int(printableH))
+	// fitRect da la posición dentro del rectángulo destino; la desplazamos al
+	// origen de ese rectángulo, que puede ser negativo cuando el margen pedido es
+	// menor que el margen físico de la impresora (GDI recorta lo que sobra).
+	fx, fy, w, h := fitRect(int(srcW), int(srcH), targetW, targetH)
+	x, y := targetX+fx, targetY+fy
 	r, _, e := procStretchDIBits.Call(
 		hdc,
 		uintptr(int32(x)), uintptr(int32(y)), uintptr(int32(w)), uintptr(int32(h)),

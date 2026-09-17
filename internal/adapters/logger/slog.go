@@ -32,9 +32,28 @@ func NewWithFile(level, file string, maxSizeMB, maxBackups int) (ports.Logger, e
 	if err != nil {
 		return nil, err
 	}
-	w := io.MultiWriter(os.Stderr, rw)
+	w := io.MultiWriter(bestEffortWriter{os.Stderr}, rw)
 	h := slog.NewTextHandler(w, &slog.HandlerOptions{Level: parseLevel(level)})
 	return &slogLogger{l: slog.New(h)}, nil
+}
+
+// bestEffortWriter descarta los errores del writer que envuelve y siempre
+// reporta éxito. Se usa para stderr.
+//
+// Motivo: el binario de la bandeja se compila con -H=windowsgui, así que corre
+// sin consola y os.Stderr es un handle inválido — cada escritura falla con
+// "handle inválido". io.MultiWriter aborta en el primer error y no llega a los
+// writers siguientes, de modo que ese fallo dejaba el log EN FICHERO
+// completamente vacío: el Agent parecía no registrar nada y no había forma de
+// diagnosticar un problema en el equipo de un cliente.
+//
+// Envolver stderr (y no reordenar los writers) mantiene la intención: escribir en
+// consola cuando la hay, sin que su ausencia afecte al fichero.
+type bestEffortWriter struct{ w io.Writer }
+
+func (b bestEffortWriter) Write(p []byte) (int, error) {
+	_, _ = b.w.Write(p)
+	return len(p), nil
 }
 
 func parseLevel(level string) slog.Level {

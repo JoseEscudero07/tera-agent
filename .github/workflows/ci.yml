@@ -23,3 +23,22 @@ jobs:
           GOOS=windows GOARCH=amd64 go build ./...
           GOOS=windows GOARCH=386   go build ./...
           GOOS=darwin  GOARCH=arm64 go build ./...
+
+  # Los adapters de Windows (driver GDI, spooler, servicio) están detrás de build
+  # tags, así que el job de Ubuntu los cross-compila pero NUNCA ejecuta sus tests.
+  # Este job es el único que los prueba de verdad.
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+      - name: Vet
+        run: go vet ./...
+      # Sin -race a propósito: el detector necesita cgo y un compilador de C, que no
+      # está garantizado en el runner de Windows. El valor de este job es ejecutar
+      # los tests con build tag windows (driver GDI, spooler, servicio), no repetir
+      # la detección de races que ya cubre el job de Ubuntu.
+      - name: Test
+        run: go test ./...

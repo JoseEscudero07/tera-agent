@@ -191,8 +191,9 @@ func cmdRun(args []string) {
 
 	app, err := di.Build(*configPath)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "tera-agent: startup failed:", err)
-		os.Exit(1)
+		// No basta con stderr: el binario de la bandeja no tiene consola y el
+		// fallo sería invisible. fatalStartup lo deja en fichero y lo muestra.
+		fatalStartup(err)
 	}
 	app.Machine.Subscribe(func(from, to agent.State) {
 		app.Log.Info("state changed", "from", string(from), "to", string(to))
@@ -278,8 +279,9 @@ func cmdUI(args []string) {
 
 	app, err := di.Build(*configPath)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "tera-agent: startup failed:", err)
-		os.Exit(1)
+		// No basta con stderr: el binario de la bandeja no tiene consola y el
+		// fallo sería invisible. fatalStartup lo deja en fichero y lo muestra.
+		fatalStartup(err)
 	}
 	app.Machine.Subscribe(func(from, to agent.State) {
 		app.Log.Info("state changed", "from", string(from), "to", string(to))
@@ -305,18 +307,28 @@ const uiAddr = "127.0.0.1:9180"
 // buildUIServer wires the desktop web UI server from the app graph.
 func buildUIServer(app *di.App) *ui.Server {
 	return ui.New(ui.Deps{
-		Machine:      app.Machine,
-		Info:         app.Info,
-		Discovery:    app.Discovery,
-		Engine:       app.Engine,
-		Profiles:     app.Profiles,
-		Cfg:          app.Cfg,
-		Version:      di.AgentVersion,
-		DataDir:      app.DataDir,
-		Log:          app.Log,
+		Machine:    app.Machine,
+		Info:       app.Info,
+		Discovery:  app.Discovery,
+		Engine:     app.Engine,
+		Profiles:   app.Profiles,
+		Cfg:        app.Cfg,
+		Version:    di.AgentVersion,
+		DataDir:    app.DataDir,
+		RunMode:    runMode(),
+		Log:        app.Log,
 		SaveConfig: app.SaveConfig,
 		ApplyTuning: func(c ports.Config) {
 			app.Engine.SetTuning(c.PrinterTuning)
+			// Margen de página: el driver GDI lo lee en cada trabajo, así que
+			// reinstalar el resolutor basta para que el cambio aplique al
+			// siguiente documento sin reiniciar.
+			if app.SetPageMargin != nil {
+				app.SetPageMargin(func(printerID string) float64 {
+					marginMM, _ := c.PageTuning(printerID)
+					return marginMM
+				})
+			}
 			// El resolver de roles vive junto al motor y también depende del
 			// snapshot de impresoras. Refrescarlo en el mismo callback evita
 			// tener que reiniciar el Agent tras cambiar un rol en el panel.
@@ -326,10 +338,35 @@ func buildUIServer(app *di.App) *ui.Server {
 	})
 }
 
+// runMode describes how this process was started, para que el panel lo muestre
+// como texto de solo lectura. Quién controla el arranque lo decide el instalador
+// (servicio de Windows o autoarranque de usuario), no la configuración: un
+// interruptor "Iniciar con Windows" en el panel solo podría mentir.
+func runMode() string {
+	switch {
+	case isWindowsService():
+		return "Servicio de Windows"
+	case os.Getenv("INVOCATION_ID") != "":
+		return "Servicio del sistema (systemd)"
+	default:
+		return "Aplicación de usuario"
+	}
+}
+
 // restartSelf makes a new configuration (e.g. after graphical registration) take
-// effect. Under a service manager (systemd sets INVOCATION_ID) it just exits so
-// the manager restarts it; otherwise it re-launches itself with the same args.
+// effect. Bajo un gestor de servicios NO se relanza a sí mismo — eso dejaría dos
+// procesos peleando por las mismas impresoras y por el puerto HTTP: sale y deja
+// que el gestor lo levante.
+//
+// El código de salida importa y es distinto en cada plataforma:
+//   - systemd (Restart=always) reinicia con cualquier código; 0 es correcto.
+//   - el SCM de Windows solo reintenta cuando considera que hubo un fallo, y una
+//     salida con código 0 es una parada limpia. Hay que salir distinto de 0 para
+//     que las acciones de recuperación del servicio nos vuelvan a arrancar.
 func restartSelf() {
+	if isWindowsService() {
+		os.Exit(1)
+	}
 	if os.Getenv("INVOCATION_ID") != "" {
 		os.Exit(0)
 	}

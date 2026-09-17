@@ -10,8 +10,10 @@ import (
 	"fmt"
 	"io/fs"
 	"net/http"
+	"net/url"
 	"os/exec"
 	"runtime"
+	"strings"
 	"time"
 
 	gws "github.com/gorilla/websocket"
@@ -46,6 +48,11 @@ type Deps struct {
 	// OnRegistered, if set, is called after a successful graphical registration
 	// so the agent can apply the new credentials (e.g. restart/reconnect).
 	OnRegistered func()
+	// RunMode describes how this process was started ("servicio" / "app de
+	// usuario"). El panel lo muestra como texto de solo lectura: quién controla el
+	// arranque lo decide el instalador, no la configuración, así que un
+	// interruptor aquí solo podría mentir.
+	RunMode string
 }
 
 // Server is the UI HTTP server.
@@ -71,6 +78,7 @@ func (s *Server) Run(ctx context.Context, addr string) error {
 	mux.HandleFunc("/api/test-print", s.testPrint)
 	mux.HandleFunc("/api/config", s.config)
 	mux.HandleFunc("/api/register", s.register)
+	mux.HandleFunc("/api/unregister", s.unregister)
 	mux.HandleFunc("/api/open-data", s.openData)
 	mux.HandleFunc("/ws/ui", s.ws)
 
@@ -163,6 +171,8 @@ func (s *Server) printers(w http.ResponseWriter, r *http.Request) {
 			"kind":          kind,
 			"cutFeedDots":   mp.CutFeedDots,   // 0 = usar default
 			"topMarginDots": mp.TopMarginDots, // 0 = usar default
+			"pageMarginMM":  mp.PageMarginMM,  // 0 = usar default (impresoras de hoja)
+			"renderDPI":     mp.RenderDPI,     // 0 = usar default
 		})
 	}
 	writeJSON(w, out)
@@ -172,12 +182,14 @@ func (s *Server) printers(w http.ResponseWriter, r *http.Request) {
 // the per-printer cut calibration).
 func (s *Server) printersManage(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Name          string `json:"name"`
-		Role          string `json:"role"`
-		Enabled       bool   `json:"enabled"`
-		Kind          string `json:"kind"`
-		CutFeedDots   int    `json:"cutFeedDots"`
-		TopMarginDots int    `json:"topMarginDots"`
+		Name          string  `json:"name"`
+		Role          string  `json:"role"`
+		Enabled       bool    `json:"enabled"`
+		Kind          string  `json:"kind"`
+		CutFeedDots   int     `json:"cutFeedDots"`
+		TopMarginDots int     `json:"topMarginDots"`
+		PageMarginMM  float64 `json:"pageMarginMM"`
+		RenderDPI     int     `json:"renderDPI"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&body)
 	if body.Name == "" {
@@ -193,6 +205,14 @@ func (s *Server) printersManage(w http.ResponseWriter, r *http.Request) {
 	if body.TopMarginDots < 0 {
 		body.TopMarginDots = 0
 	}
+	// Un margen mayor que media hoja dejaría un área de impresión nula; acotarlo
+	// aquí evita que el driver tenga que decidir qué hacer con un absurdo.
+	body.PageMarginMM = clampFloat(body.PageMarginMM, 0, maxPageMarginMM)
+	// Fuera de este rango, o el texto es ilegible o el bitmap no cabe en el
+	// presupuesto de DIB de los drivers host-based y el backoff lo reduce igual.
+	if body.RenderDPI != 0 {
+		body.RenderDPI = clamp(body.RenderDPI, minRenderDPI, maxRenderDPI)
+	}
 	kind := ports.PrinterKind(body.Kind)
 	// Rechazar valores desconocidos y caer al default (thermal) evita meter
 	// basura al YAML si el panel manda algo inesperado.
@@ -203,13 +223,17 @@ func (s *Server) printersManage(w http.ResponseWriter, r *http.Request) {
 	// venía del kind anterior y ensureProfile lo respetaría en vez de recrearlo.
 	// Si el Backend nos envía un perfil real, sobrescribe el nuestro en el
 	// siguiente sync (ver lifecycle.printers).
-	if prev, ok := findManaged(s.d.Cfg.Printers, body.Name); ok && prev.Kind != kind {
+	// El DPI vive dentro del perfil cacheado, así que cambiarlo obliga a olvidarlo
+	// igual que un cambio de tipo: si no, el perfil viejo seguiría mandando.
+	if prev, ok := findManaged(s.d.Cfg.Printers, body.Name); ok &&
+		(prev.Kind != kind || prev.RenderDPI != body.RenderDPI) {
 		s.d.Profiles.Forget(body.Name)
 	}
 	s.d.Cfg.Printers = upsertManaged(s.d.Cfg.Printers, ports.ManagedPrinter{
 		Name: body.Name, Role: ports.PrinterRole(body.Role), Enabled: body.Enabled,
 		Kind:        kind,
 		CutFeedDots: body.CutFeedDots, TopMarginDots: body.TopMarginDots,
+		PageMarginMM: body.PageMarginMM, RenderDPI: body.RenderDPI,
 	})
 	if err := s.persist(); err != nil {
 		writeErr(w, err.Error())
@@ -359,9 +383,14 @@ func (s *Server) escposProfile(printer string) {
 // entre calidad visible y compatibilidad. Un ERP que catalogue una impresora
 // premium a 1200 dpi puede subir el DPI desde el catálogo del Backend.
 func (s *Server) pdfProfile(printer string) {
+	_, dpi := s.d.Cfg.PageTuning(printer)
 	s.d.Profiles.Set(dp.PrinterProfile{
 		PrinterID: printer, NativeFormats: []dp.DeviceFormat{dp.DeviceGDIRaster},
-		WidthDots: 4960, DPI: 600,
+		// WidthDots: 0 a propósito. Antes se fijaba a 4960 (ancho de A4 a 600dpi),
+		// lo que forzaba CUALQUIER documento al ancho de un A4: un Letter o un A5
+		// salían estirados. Con 0, el rasterizador respeta el tamaño real de la
+		// página del PDF y sólo aplica el DPI pedido.
+		WidthDots: 0, DPI: dpi,
 		SupportsCut:    false,
 		SupportsDrawer: false,
 	})
@@ -425,42 +454,135 @@ func removeManaged(list []ports.ManagedPrinter, name string) []ports.ManagedPrin
 	return out
 }
 
+// maxCutFeedDots acota el avance de corte configurable (~25cm de papel). Un
+// valor absurdo desperdiciaría un rollo entero por ticket.
+const maxCutFeedDots = 2000
+
+// Límites de los ajustes de las impresoras de hoja.
+const (
+	// maxPageMarginMM: más de 50mm por lado deja un A4 sin sitio útil.
+	maxPageMarginMM = 50.0
+	// Por debajo de 150 dpi el texto pequeño es ilegible; por encima de 600 el
+	// bitmap no cabe en el presupuesto de DIB de los drivers host-based y el
+	// backoff acaba reduciéndolo igual, así que sólo se gana lentitud.
+	minRenderDPI = 150
+	maxRenderDPI = 600
+)
+
+// forgetPageProfiles invalida el perfil cacheado de las impresoras de hoja, para
+// que se reconstruya con el DPI nuevo. Las térmicas no se tocan: su perfil no
+// depende de estos ajustes.
+func (s *Server) forgetPageProfiles() {
+	for _, p := range s.d.Cfg.Printers {
+		if p.Kind == ports.KindPDF && p.RenderDPI == 0 {
+			s.d.Profiles.Forget(p.Name)
+		}
+	}
+}
+
+func clampFloat(v, lo, hi float64) float64 {
+	if v < lo {
+		return lo
+	}
+	if v > hi {
+		return hi
+	}
+	return v
+}
+
 func (s *Server) config(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodGet {
+		// El Token NUNCA se devuelve al navegador: se informa sólo de si existe y
+		// de sus últimos caracteres, lo justo para que el operador reconozca cuál
+		// está puesto sin exponer la credencial.
 		writeJSON(w, map[string]any{
 			"nombre":        s.d.Cfg.AgentID,
 			"url":           s.d.Cfg.BackendURL,
+			"tokenSet":      s.d.Cfg.Token != "",
+			"tokenHint":     tokenHint(s.d.Cfg.Token),
 			"log":           s.d.Cfg.LogLevel,
 			"dataDir":       s.d.DataDir,
+			"runMode":       s.d.RunMode,
 			"cutFeedDots":   s.d.Cfg.CutFeedDots,
 			"topMarginDots": s.d.Cfg.TopMarginDots,
+			"pageMarginMM":  s.d.Cfg.PageMarginMM,
+			"renderDPI":     s.d.Cfg.RenderDPI,
 		})
 		return
 	}
+
+	// Todos los campos son punteros: lo que el panel no envía, no se toca. Antes
+	// eran valores planos y guardar el formulario con la URL vacía borraba la URL
+	// del Backend, desregistrando el equipo sin querer.
 	var body struct {
-		Nombre        string `json:"nombre"`
-		URL           string `json:"url"`
-		Log           string `json:"log"`
-		CutFeedDots   int    `json:"cutFeedDots"`
-		TopMarginDots int    `json:"topMarginDots"`
+		Nombre        *string  `json:"nombre"`
+		URL           *string  `json:"url"`
+		Token         *string  `json:"token"`
+		Log           *string  `json:"log"`
+		CutFeedDots   *int     `json:"cutFeedDots"`
+		TopMarginDots *int     `json:"topMarginDots"`
+		PageMarginMM  *float64 `json:"pageMarginMM"`
+		RenderDPI     *int     `json:"renderDPI"`
 	}
-	_ = json.NewDecoder(r.Body).Decode(&body)
-	s.d.Cfg.AgentID = body.Nombre
-	s.d.Cfg.BackendURL = body.URL
-	if body.Log != "" {
-		s.d.Cfg.LogLevel = body.Log
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeErr(w, "petición inválida: "+err.Error())
+		return
 	}
-	if body.CutFeedDots < 0 {
-		body.CutFeedDots = 0
+
+	// Un cambio de conexión (URL o Token) invalida la sesión actual con el
+	// Backend, así que hay que reconectar; el resto se aplica en vivo.
+	connChanged := false
+
+	if body.URL != nil {
+		url := strings.TrimSpace(*body.URL)
+		if url != "" {
+			if err := validateBackendURL(url); err != nil {
+				writeErr(w, err.Error())
+				return
+			}
+		}
+		if url != s.d.Cfg.BackendURL {
+			s.d.Cfg.BackendURL = url
+			connChanged = true
+		}
 	}
-	if body.CutFeedDots > 2000 {
-		body.CutFeedDots = 2000
+	// Token vacío = "no lo cambies". Es la única forma de tener un formulario que
+	// se pueda guardar sin reescribir la credencial en cada guardado. Para
+	// borrarlo de verdad está /api/unregister.
+	if body.Token != nil {
+		if tok := strings.TrimSpace(*body.Token); tok != "" && tok != s.d.Cfg.Token {
+			s.d.Cfg.Token = tok
+			connChanged = true
+		}
 	}
-	if body.TopMarginDots < 0 {
-		body.TopMarginDots = 0
+	if body.Nombre != nil {
+		s.d.Cfg.AgentID = strings.TrimSpace(*body.Nombre)
 	}
-	s.d.Cfg.CutFeedDots = body.CutFeedDots
-	s.d.Cfg.TopMarginDots = body.TopMarginDots
+	if body.Log != nil && *body.Log != "" {
+		s.d.Cfg.LogLevel = *body.Log
+	}
+	if body.CutFeedDots != nil {
+		s.d.Cfg.CutFeedDots = clamp(*body.CutFeedDots, 0, maxCutFeedDots)
+	}
+	if body.TopMarginDots != nil {
+		s.d.Cfg.TopMarginDots = clamp(*body.TopMarginDots, 0, maxCutFeedDots)
+	}
+	if body.PageMarginMM != nil {
+		s.d.Cfg.PageMarginMM = clampFloat(*body.PageMarginMM, 0, maxPageMarginMM)
+	}
+	if body.RenderDPI != nil {
+		dpi := *body.RenderDPI
+		if dpi != 0 { // 0 = usar el default interno
+			dpi = clamp(dpi, minRenderDPI, maxRenderDPI)
+		}
+		// Cambiar el DPI global invalida los perfiles cacheados de las impresoras
+		// de hoja que no tengan override propio.
+		if dpi != s.d.Cfg.RenderDPI {
+			s.forgetPageProfiles()
+		}
+		s.d.Cfg.RenderDPI = dpi
+	}
+
 	if s.d.ApplyTuning != nil {
 		s.d.ApplyTuning(s.d.Cfg)
 	}
@@ -470,7 +592,84 @@ func (s *Server) config(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	writeJSON(w, map[string]any{"ok": true, "note": "los cambios de conexión aplican al reiniciar"})
+
+	if connChanged {
+		s.applyConnectionChange(w, "Datos de conexión guardados; reconectando…")
+		return
+	}
+	writeJSON(w, map[string]any{"ok": true, "note": "Cambios guardados y aplicados."})
+}
+
+// unregister desvincula el equipo: borra Token y URL y reinicia, de modo que el
+// panel vuelve a la pantalla de registro. Es la acción explícita que antes sólo
+// se conseguía por accidente (vaciando el campo URL y guardando).
+func (s *Server) unregister(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeErr(w, "usa POST")
+		return
+	}
+	s.d.Cfg.Token = ""
+	s.d.Cfg.BackendURL = ""
+	if s.d.SaveConfig != nil {
+		if err := s.d.SaveConfig(s.d.Cfg); err != nil {
+			writeErr(w, err.Error())
+			return
+		}
+	}
+	s.applyConnectionChange(w, "Equipo desvinculado; reiniciando…")
+}
+
+// applyConnectionChange responde y luego dispara el reinicio del Agent. El orden
+// importa: si reiniciáramos antes de escribir la respuesta, el navegador vería
+// una conexión cortada en vez del resultado.
+func (s *Server) applyConnectionChange(w http.ResponseWriter, note string) {
+	writeJSON(w, map[string]any{"ok": true, "note": note, "restarting": true})
+	if s.d.OnRegistered == nil {
+		return
+	}
+	go func() {
+		time.Sleep(700 * time.Millisecond)
+		s.d.OnRegistered()
+	}()
+}
+
+// validateBackendURL comprueba que la URL del Backend sea un endpoint WebSocket
+// utilizable. Antes no se validaba nada: un valor con una errata se guardaba tal
+// cual y el agente quedaba en un bucle de reconexión sin explicación clara.
+func validateBackendURL(raw string) error {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return fmt.Errorf("la URL del servidor no es válida: %w", err)
+	}
+	switch u.Scheme {
+	case "wss", "ws":
+	default:
+		return fmt.Errorf("la URL debe empezar por wss:// (o ws:// en desarrollo), no %q", u.Scheme)
+	}
+	if u.Host == "" {
+		return fmt.Errorf("la URL del servidor no incluye el host")
+	}
+	return nil
+}
+
+// tokenHint devuelve los últimos 4 caracteres del Token para que el operador
+// distinga qué credencial está puesta. Con tokens muy cortos no devuelve nada:
+// más vale no mostrar pista que filtrar el secreto entero.
+func tokenHint(token string) string {
+	if len(token) < 8 {
+		return ""
+	}
+	return token[len(token)-4:]
+}
+
+func clamp(v, lo, hi int) int {
+	if v < lo {
+		return lo
+	}
+	if v > hi {
+		return hi
+	}
+	return v
 }
 
 func (s *Server) register(w http.ResponseWriter, r *http.Request) {
@@ -479,6 +678,8 @@ func (s *Server) register(w http.ResponseWriter, r *http.Request) {
 		URL   string `json:"url"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&body)
+	body.Token = strings.TrimSpace(body.Token)
+	body.URL = strings.TrimSpace(body.URL)
 	if body.Token == "" {
 		writeErr(w, "token vacío")
 		return
@@ -486,6 +687,10 @@ func (s *Server) register(w http.ResponseWriter, r *http.Request) {
 	// La URL puede llegar en el body o venir ya en el config; exigimos ambas para
 	// no dejar el agente en un estado a medio registrar (token sin destino).
 	if body.URL != "" {
+		if err := validateBackendURL(body.URL); err != nil {
+			writeErr(w, err.Error())
+			return
+		}
 		s.d.Cfg.BackendURL = body.URL
 	}
 	if s.d.Cfg.BackendURL == "" {
@@ -499,14 +704,7 @@ func (s *Server) register(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	writeJSON(w, map[string]any{"ok": true, "note": "aplicando registro…"})
-	// Apply the new credentials (restart/reconnect) after the response is sent.
-	if s.d.OnRegistered != nil {
-		go func() {
-			time.Sleep(700 * time.Millisecond)
-			s.d.OnRegistered()
-		}()
-	}
+	s.applyConnectionChange(w, "aplicando registro…")
 }
 
 func (s *Server) openData(w http.ResponseWriter, _ *http.Request) {

@@ -186,6 +186,70 @@ func fitRect(srcW, srcH, printW, printH int) (x, y, w, h int) {
 	return x, y, w, h
 }
 
+// ---- Geometría de página ----
+
+// pageArea describe la página tal como la reporta el driver de la impresora,
+// en píxeles del dispositivo.
+//
+//	PhysW/PhysH  hoja completa (p. ej. A4 = 4960x7014 @600dpi)
+//	PrintW/PrintH  área donde el hardware SÍ puede depositar tinta
+//	OffX/OffY    dónde empieza el área imprimible dentro de la hoja
+//
+// En una láser típica el área imprimible es ~96% de la hoja: hay un margen
+// físico de ~4mm por lado que ninguna configuración puede eliminar.
+type pageArea struct {
+	PhysW, PhysH   int
+	PrintW, PrintH int
+	OffX, OffY     int
+	DPIX, DPIY     int
+}
+
+// valid reporta si el driver dio una geometría física utilizable. Algunos
+// drivers no rellenan PHYSICALWIDTH/OFFSET; en ese caso hay que caer al área
+// imprimible.
+func (a pageArea) valid() bool {
+	return a.PhysW > 0 && a.PhysH > 0 && a.DPIX > 0 && a.DPIY > 0 &&
+		a.PhysW >= a.PrintW && a.PhysH >= a.PrintH
+}
+
+// targetRect devuelve el rectángulo donde debe encajarse el contenido, EN
+// COORDENADAS DEL ÁREA IMPRIMIBLE (que es el sistema en el que dibuja
+// StretchDIBits), para respetar un margen medido desde el borde FÍSICO del papel.
+//
+// El detalle que importa: el origen de dibujo no es la esquina del papel sino la
+// del área imprimible, así que un margen de 0mm se traduce en coordenadas
+// NEGATIVAS (-OffX, -OffY). Es correcto y deliberado: GDI recorta lo que sobra, y
+// el resultado es que la página del PDF se mapea 1:1 con la hoja física en vez de
+// encogerse para caber en el área imprimible.
+//
+// Antes se encajaba en el área imprimible sin más, lo que reducía un A4 al ~96% y
+// sumaba el margen del hardware al que el PDF ya traía.
+func targetRect(a pageArea, marginMM float64) (x, y, w, h int) {
+	if !a.valid() {
+		// Sin geometría física fiable, lo único seguro es el área imprimible.
+		return 0, 0, a.PrintW, a.PrintH
+	}
+	mx := mmToPx(marginMM, a.DPIX)
+	my := mmToPx(marginMM, a.DPIY)
+
+	w = a.PhysW - 2*mx
+	h = a.PhysH - 2*my
+	// Un margen absurdo (mayor que media hoja) dejaría un área nula o negativa.
+	// Preferimos imprimir pequeño a no imprimir: caemos al área imprimible.
+	if w <= 0 || h <= 0 {
+		return 0, 0, a.PrintW, a.PrintH
+	}
+	return mx - a.OffX, my - a.OffY, w, h
+}
+
+// mmToPx convierte milímetros a píxeles del dispositivo, redondeando.
+func mmToPx(mm float64, dpi int) int {
+	if mm <= 0 || dpi <= 0 {
+		return 0
+	}
+	return int(math.Round(mm / 25.4 * float64(dpi)))
+}
+
 // ---- DIB monocromo (1 bpp) ----
 
 // rgbQuad es RGBQUAD de Win32 (orden B,G,R,reservado) para la tabla de color.

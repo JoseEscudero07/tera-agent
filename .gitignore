@@ -10,6 +10,10 @@
 # Scratchpad / temporales de desarrollo
 /scratchpad/
 
+# Staging del instalador: lo regenera scripts/build-release.ps1 en cada build
+# (binarios + bundle de poppler, ~40 MB). El .iss sí se versiona.
+/installer/staging/
+
 # Local config with secrets (Token). Never commit.
 config.json
 config.yaml

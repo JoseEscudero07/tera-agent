@@ -76,11 +76,14 @@ func (r *Rasterizer) Rasterize(ctx context.Context, pdf []byte, opts dp.RasterOp
 	defer cancel()
 	bin := resolvePdftoppm(r.log)
 	cmd := exec.CommandContext(runCtx, bin, args...)
+	// Sin esto, el binario de la bandeja (sin consola propia) hace que Windows
+	// abra una ventana negra en cada rasterizado.
+	hideConsole(cmd)
 	cmd.Env = append(os.Environ(), "LC_ALL=C")
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		return nil, fmt.Errorf("poppler: pdftoppm (%s): %w: %s", bin, err, stderr.String())
+		return nil, runError(bin, err, stderr.String())
 	}
 
 	files, err := filepath.Glob(prefix + "*.png")
@@ -110,6 +113,37 @@ func (r *Rasterizer) Rasterize(ctx context.Context, pdf []byte, opts dp.RasterOp
 }
 
 var _ dp.Rasterizer = (*Rasterizer)(nil)
+
+// dllNotFoundExit es STATUS_DLL_NOT_FOUND (0xC0000135) visto como código de
+// salida: Windows no llegó a ejecutar el binario porque le falta una DLL.
+const dllNotFoundExit = -1073741515
+
+// runError explica por qué falló pdftoppm.
+//
+// El caso 0xC0000135 merece mensaje propio: el proceso no arranca siquiera, así
+// que stderr viene vacío y el error crudo ("exit status 0xc0000135") no dice nada
+// a quien da soporte en el equipo de un cliente. En la práctica siempre significa
+// lo mismo: falta el runtime de Visual C++ que pdftoppm y varias DLLs de poppler
+// importan, y que no viene incluido en el bundle de poppler.
+func runError(bin string, err error, stderr string) error {
+	var ee *exec.ExitError
+	if errors.As(err, &ee) && ee.ExitCode() == dllNotFoundExit {
+		return dllNotFoundError(bin)
+	}
+	if stderr == "" {
+		return fmt.Errorf("poppler: pdftoppm (%s): %w", bin, err)
+	}
+	return fmt.Errorf("poppler: pdftoppm (%s): %w: %s", bin, err, stderr)
+}
+
+// dllNotFoundError redacta el diagnóstico de 0xC0000135 con la acción concreta a
+// tomar, que es lo que necesita quien está delante del equipo del cliente.
+func dllNotFoundError(bin string) error {
+	return fmt.Errorf("poppler: %s no pudo arrancar: falta una DLL requerida (0xC0000135). "+
+		"Normalmente es el runtime de Visual C++: comprueba que msvcp140.dll, "+
+		"vcruntime140.dll y vcruntime140_1.dll estén junto a pdftoppm.exe, o instala "+
+		"el Microsoft Visual C++ Redistributable (x64)", bin)
+}
 
 // resolvePdftoppm finds the pdftoppm binary. Order:
 //  1. TERA_PDFTOPPM env var (absolute path). Useful for tests and admins.

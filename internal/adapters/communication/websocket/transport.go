@@ -54,7 +54,7 @@ func New(url string, log ports.Logger, tlsCfg *tls.Config) *Transport {
 func (t *Transport) Connect(ctx context.Context) error {
 	dialer := gws.Dialer{HandshakeTimeout: handshakeTimeout, TLSClientConfig: t.tls}
 	t.log.Debug("ws dial", "url", redactURL(t.url))
-	conn, resp, err := dialer.DialContext(ctx, t.url, nil)
+	conn, resp, err := dialer.DialContext(ctx, t.url, originHeader(t.url))
 	if err != nil {
 		return wrapDialError(err, resp, t.url)
 	}
@@ -83,6 +83,34 @@ func wrapDialError(err error, resp *http.Response, target string) error {
 	return fmt.Errorf("ws %s: %w (HTTP %d: %s)", redactURL(target), err, resp.StatusCode, snippet)
 }
 
+// originHeader construye la cabecera Origin del upgrade, derivada del propio
+// host del Backend (wss://host/... → https://host).
+//
+// Por qué hace falta: Django Channels suele envolver el router de WebSocket en
+// AllowedHostsOriginValidator, que responde 403 a cualquier upgrade SIN cabecera
+// Origin — antes incluso de resolver la ruta. Es una protección pensada para
+// navegadores: evita que una página maliciosa abra un WebSocket aprovechando las
+// cookies de sesión del usuario. Un cliente nativo como el Agent no tiene
+// credenciales ambientales que puedan robarse así: se autentica con un Token
+// explícito, así que la comprobación no aporta seguridad aquí, solo impide
+// conectar.
+//
+// No cambia el contrato de autenticación: el Token sigue viajando únicamente en
+// el mensaje `authenticate`, nunca en la URL ni en cabeceras.
+func originHeader(raw string) http.Header {
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" {
+		return nil // sin host no hay Origin válido; que falle el dial con su propio error
+	}
+	scheme := "https"
+	if u.Scheme == "ws" || u.Scheme == "http" {
+		scheme = "http"
+	}
+	h := http.Header{}
+	h.Set("Origin", scheme+"://"+u.Host)
+	return h
+}
+
 // redactURL quita fragmentos que podrían contener secretos (token en la query,
 // user info) antes de imprimir la URL. La ruta y el host se dejan porque son
 // justo lo que necesitas para diagnosticar (¿estás dialando el endpoint
@@ -99,7 +127,6 @@ func redactURL(raw string) string {
 	}
 	return u.String()
 }
-
 
 func (t *Transport) readPump() {
 	defer close(t.inbox)

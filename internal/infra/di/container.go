@@ -56,6 +56,38 @@ type App struct {
 	Cfg ports.Config
 	// SaveConfig persists configuration changes made from the UI.
 	SaveConfig func(ports.Config) error
+	// SetPageMargin reinstala el resolutor de margen de página en los drivers que
+	// lo soportan, para que el panel pueda cambiarlo sin reiniciar el Agent.
+	SetPageMargin func(func(printerID string) float64)
+}
+
+// pageMarginSetter lo implementan los drivers que colocan la página respecto al
+// borde físico del papel (hoy sólo el GDI de Windows).
+//
+// Se declara aquí, en el punto de composición, y no en el dominio: "margen de
+// página" es un detalle de las impresoras de hoja, y meterlo en el puerto Driver
+// obligaría a implementarlo a la térmica y al driver de fichero, que no tienen
+// papel físico que medir.
+type pageMarginSetter interface {
+	SetPageMargin(func(printerID string) float64)
+}
+
+// applyPageMargin instala fn en todos los drivers que sepan usarla.
+func applyPageMargin(drivers []dp.Driver, fn func(printerID string) float64) {
+	for _, d := range drivers {
+		if s, ok := d.(pageMarginSetter); ok {
+			s.SetPageMargin(fn)
+		}
+	}
+}
+
+// pageMarginOf adapta Config.PageTuning (que resuelve margen y DPI) a lo único
+// que necesita el driver: el margen.
+func pageMarginOf(cfg ports.Config) func(string) float64 {
+	return func(printerID string) float64 {
+		marginMM, _ := cfg.PageTuning(printerID)
+		return marginMM
+	}
 }
 
 // PrintOptions tune the print engine wiring for a command.
@@ -91,10 +123,13 @@ func Build(configPath string) (*App, error) {
 
 	disc := platform.NewDiscovery(log)
 	bin := newBinarizer(0)
-	engine, profiles := newEngine(log, platform.Drivers(log, bin), bin)
+	drivers := platform.Drivers(log, bin)
+	engine, profiles := newEngine(log, drivers, bin)
 	// Per-printer cut calibration from config (feed before cut, top margin), so a
 	// client can tune the cut per printer without recompiling.
 	engine.SetTuning(cfg.PrinterTuning)
+	// Margen de página por impresora (impresoras de hoja: láser/inyección).
+	applyPageMargin(drivers, pageMarginOf(cfg))
 
 	roles := appprint.NewRoleResolver(cfg.Printers, cfg.DefaultPrinter)
 
@@ -130,12 +165,20 @@ func Build(configPath string) (*App, error) {
 		Info:         info,
 		Cfg:          cfg,
 		SaveConfig:   func(c ports.Config) error { return config.New(configPath).Save(c) },
+		SetPageMargin: func(fn func(printerID string) float64) {
+			applyPageMargin(drivers, fn)
+		},
 	}, nil
 }
 
-// AgentVersion is reported to the Backend in hello/register/heartbeat and by the
-// `version` command.
-const AgentVersion = "1.0.0"
+// AgentVersion is reported to the Backend in hello/register/heartbeat, shown in
+// the panel and by the `version` command. Es var (no const) para que el build de
+// release lo inyecte:
+//
+//	go build -ldflags "-X github.com/teraerp/tera-agent/internal/infra/di.AgentVersion=1.3.0" ./cmd/tera-agent
+//
+// El default "0.0.0-dev" marca claramente los binarios compilados sin release.
+var AgentVersion = "0.0.0-dev"
 
 // dataDir resolves where the Agent persists runtime state (job dedup/pending).
 func dataDir(cfg ports.Config) string {

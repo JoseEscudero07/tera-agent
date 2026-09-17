@@ -28,6 +28,13 @@ type Config struct {
 	// TopMarginDots is the global default of blank top rows to keep. 0 = the
 	// encoder's built-in default. A printer entry can override it.
 	TopMarginDots int
+	// PageMarginMM es el margen por defecto de las impresoras de página, en mm
+	// desde el borde FÍSICO del papel. 0 = DefaultPageMarginMM (página completa,
+	// 1:1 con el papel). Una impresora puede sobreescribirlo.
+	PageMarginMM float64
+	// RenderDPI es la calidad de rasterizado por defecto de las impresoras de
+	// página. 0 = DefaultRenderDPI. Una impresora puede sobreescribirlo.
+	RenderDPI int
 	// HeartbeatInterval is a default; the Backend may override it at handshake.
 	HeartbeatInterval time.Duration
 	// LogLevel: debug|info|warn|error.
@@ -93,6 +100,13 @@ type ManagedPrinter struct {
 	// TopMarginDots overrides how many blank top rows to keep. 0 = use the global
 	// default (Config.TopMarginDots) or the built-in default.
 	TopMarginDots int
+	// PageMarginMM overrides the page margin for this printer, in millimetres
+	// measured desde el borde FÍSICO del papel. Solo aplica a impresoras de
+	// página (Kind == KindPDF). 0 = usar el default global.
+	PageMarginMM float64
+	// RenderDPI overrides the rasterisation quality for this printer. Solo aplica
+	// a impresoras de página. 0 = usar el default global.
+	RenderDPI int
 }
 
 // KindOf resolves the declared kind for a printer, or thermal if unmanaged /
@@ -108,6 +122,52 @@ func (c Config) KindOf(printerID string) PrinterKind {
 		}
 	}
 	return KindThermal
+}
+
+// Defaults de las impresoras de página (kind=pdf).
+const (
+	// DefaultPageMarginMM = 0: la página del PDF se mapea 1:1 al papel físico.
+	//
+	// Es a propósito y corrige el comportamiento anterior, que encajaba la página
+	// completa dentro del ÁREA IMPRIMIBLE: eso reducía un A4 al ~96% y sumaba el
+	// margen del hardware (≈4mm en una láser típica) al margen que el propio PDF
+	// ya trae, con el resultado de demasiado blanco alrededor.
+	//
+	// Con 0 el recorte que aplique la impresora es solo el suyo, inevitable, y
+	// como casi todos los documentos traen ≥10mm de margen propio no se pierde
+	// contenido. Es lo que hace un visor de PDF al imprimir a "Tamaño real".
+	DefaultPageMarginMM = 0.0
+
+	// DefaultRenderDPI equilibra nitidez y tamaño del bitmap. A 300 dpi un A4 en
+	// gris entra holgado en el presupuesto de DIB de los drivers host-based; 600
+	// se ve algo mejor en texto pequeño pero cuadruplica los bytes y hace que el
+	// driver GDI tenga que reducir por backoff en muchas impresoras.
+	DefaultRenderDPI = 300
+)
+
+// PageTuning resuelve el margen y el DPI de una impresora de página: gana el
+// override de la impresora, luego el default global, y si no los defaults
+// internos. Mismo criterio que PrinterTuning para el corte.
+func (c Config) PageTuning(printerID string) (marginMM float64, dpi int) {
+	marginMM, dpi = c.PageMarginMM, c.RenderDPI
+	for _, p := range c.Printers {
+		if p.Name == printerID {
+			if p.PageMarginMM != 0 {
+				marginMM = p.PageMarginMM
+			}
+			if p.RenderDPI != 0 {
+				dpi = p.RenderDPI
+			}
+			break
+		}
+	}
+	if marginMM == 0 {
+		marginMM = DefaultPageMarginMM
+	}
+	if dpi <= 0 {
+		dpi = DefaultRenderDPI
+	}
+	return marginMM, dpi
 }
 
 // PrinterTuning resolves the cut calibration for a printer: the per-printer

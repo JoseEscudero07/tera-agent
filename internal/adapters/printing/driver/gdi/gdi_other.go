@@ -24,3 +24,7 @@ func (*Driver) Accepts(dp.DeviceFormat) bool { return false }
 func (*Driver) Send(context.Context, string, []byte) error {
 	return fmt.Errorf("gdi: driver only available on Windows")
 }
+
+// SetPageMargin existe para igualar la superficie de la versión Windows, de modo
+// que la composición en infra/di no necesite condicionales por sistema.
+func (*Driver) SetPageMargin(func(string) float64) {}
