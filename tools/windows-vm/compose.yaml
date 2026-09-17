@@ -1,0 +1,41 @@
+# VM Windows 11 limpia para probar el instalador de Tera Agent desde Linux.
+# No se usa directamente: tools/windows-vm/vm.sh la gestiona y exporta
+# TERA_VM_HOME. Ver README.md.
+#
+# Todos los puertos escuchan solo en 127.0.0.1: WinRM va sin cifrar y con una
+# contraseña de prueba, no debe quedar expuesto en la red local.
+name: tera-agent-win11
+
+services:
+  windows:
+    image: dockurr/windows
+    container_name: tera-win11
+    environment:
+      VERSION: "11"
+      LANGUAGE: "Spanish"
+      REGION: "es-ES"
+      KEYBOARD: "es-ES"
+      USERNAME: "cajero"
+      PASSWORD: "${TERA_VM_PASSWORD:-tera-test}"
+      RAM_SIZE: "${TERA_VM_RAM:-4G}"
+      CPU_CORES: "${TERA_VM_CPUS:-3}"
+      DISK_SIZE: "64G"
+      # qcow2 permite guardar el Windows recién instalado y volver a él antes de
+      # cada prueba (vm.sh save / reset).
+      DISK_FMT: "qcow2"
+    devices:
+      - /dev/kvm
+      - /dev/net/tun
+    cap_add:
+      - NET_ADMIN
+    ports:
+      - 127.0.0.1:8006:8006
+      - 127.0.0.1:3389:3389/tcp
+      - 127.0.0.1:5985:5985/tcp
+    volumes:
+      # Discos y carpeta compartida fuera del repo: son decenas de GB.
+      - ${TERA_VM_HOME:?define TERA_VM_HOME}/storage:/storage
+      - ${TERA_VM_HOME}/shared:/shared
+      - ./oem:/oem:ro
+    stop_grace_period: 2m
+    restart: "no"

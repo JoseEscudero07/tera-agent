@@ -10,6 +10,14 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1.0.0/).
   (`installer/wine/Dockerfile`, instalador de Inno Setup verificado por SHA256).
   Versión y hash de poppler en `installer/poppler.env`, compartido con
   `release.yml`.
+- **`tools/windows-vm`**: VM Windows 11 limpia en Docker para validar un instalador
+  desde Linux. `test.sh` vuelve al estado limpio, instala (usuario o servicio),
+  reinicia, pasa `windows-verify.ps1`, imprime en impresoras virtuales (térmica,
+  láser y una con tildes) y comprueba lo que recibieron; `make-erp-pdfs.sh` genera
+  facturas reales con el generador del ERP.
+- `examples/mock-server`: `--format pdf` (perfil de impresora "normal" como lo
+  envía el ERP), varios PDF separados por comas, `--exit` y una línea `RESULT`
+  por trabajo para scripts.
 - **Impresión vectorial en láser / inyección (Windows)** con `pdftocairo -print`
   (`driver/pdfvector`), modo por defecto. El texto llega al driver como texto y
   la impresora lo imprime a su resolución nativa; carta sale en carta y A4 en A4.

@@ -168,6 +168,8 @@ usa el servidor de referencia:
 
 ```bash
 go run ./examples/mock-server --pdf factura.pdf --printer KL200
+# láser tal como la envía el ERP, varios PDF y salir al terminar:
+# go run ./examples/mock-server --format pdf --pdf a.pdf,b.pdf --printer "HP LaserJet" --exit
 # en otra terminal, con server.url: "ws://127.0.0.1:8765"
 ./tera-agent run --config config.yaml
 ```

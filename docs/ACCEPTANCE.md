@@ -24,6 +24,10 @@ diez minutos en una VM limpia.
 
 Cualquiera de estas sirve:
 
+- **Desde Linux, automatizado** — [tools/windows-vm](../tools/windows-vm/README.md):
+  Windows 11 limpio en Docker con estado guardado, y `test.sh` instala, reinicia,
+  pasa `windows-verify.ps1` e imprime facturas reales en impresoras virtuales
+  comprobando lo que recibieron. Es la opción de referencia antes de un release.
 - **Windows Sandbox** — lo más rápido. Viene en Windows Pro/Enterprise: actívalo en
   *Características de Windows → Espacio aislado de Windows*. Se destruye al cerrar,
   así que cada prueba parte de cero de verdad.
