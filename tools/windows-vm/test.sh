@@ -159,6 +159,22 @@ else
   }
 fi
 
+# --- Actualización encima ------------------------------------------------------
+# El caso real de cada release: el cliente ya tiene el agente y se instala la
+# versión nueva a base de "siguiente". El instalador tiene que conservar el modo
+# (si cambiara, quedarían el servicio y la app de usuario con el mismo Token, y
+# el ERP recibiría cada impresión duplicada) y el registro del equipo.
+step "Actualizar instalando encima (sin /MODE)"
+up="$("$vm" run "& powershell -NoProfile -ExecutionPolicy Bypass -File \\\\host.lan\\Data\\guest\\upgrade-agent.ps1 -Setup '$(basename "$setup")' -Mode $mode" 2>&1 || true)"
+echo "  $(echo "$up" | grep -E '^UPGRADED|rror' | paste -sd' ' -)"
+want_svc=False; want_run=True
+[[ "$mode" == service ]] && { want_svc=True; want_run=False; }
+if grep -q "^UPGRADED servicio=$want_svc autoarranque=$want_run token=True" <<<"$up"; then
+  ok "sigue en modo $mode y conserva el registro"
+else
+  fail "la actualización cambió el modo o perdió el registro: $up"
+fi
+
 step "Resultado"
 if ((fails)); then
   printf '\033[31m%d fallo(s)\033[0m. Salidas en %s/out\n' "$fails" "$shared"
