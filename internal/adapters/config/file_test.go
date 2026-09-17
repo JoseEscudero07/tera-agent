@@ -278,3 +278,26 @@ func TestEnsureDefault(t *testing.T) {
 		t.Error("EnsureDefault pisó una config existente")
 	}
 }
+
+// El config.yaml inicial trae ya la URL del ERP: dar de alta un equipo es pegar
+// el Token y nada más. El Token, en cambio, tiene que quedar vacío.
+func TestEnsureDefaultTraeLaURLDelERP(t *testing.T) {
+	dataDir := t.TempDir()
+	path := filepath.Join(dataDir, "config.yaml")
+	if _, err := EnsureDefault(path, dataDir); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := New(path).Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.BackendURL != ports.DefaultBackendURL {
+		t.Errorf("server.url = %q; se esperaba %q", cfg.BackendURL, ports.DefaultBackendURL)
+	}
+	if err := ValidateBackendURL(cfg.BackendURL); err != nil {
+		t.Errorf("la URL por defecto no pasa la validación: %v", err)
+	}
+	if cfg.Token != "" {
+		t.Errorf("Token = %q; el config inicial no debe traer credenciales", cfg.Token)
+	}
+}

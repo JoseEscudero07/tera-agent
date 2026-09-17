@@ -352,7 +352,7 @@ document.getElementById('nav').addEventListener('click',e=>{
 
 // --- API con fallback a demo ---
 const DEMO={
-  status:{registered:true,state:'CONNECTED',empresa:'SUMIPROD DE LA COSTA S.A.S.',sede:'Sede Principal',equipo:'CAJA-01',lastSync:'hace 3 s',version:'1.0.0',os:'windows',dataDir:'C:\\\\ProgramData\\\\TeraAgent',serverUrl:'wss://erp.midominio.com/ws/agent/'},
+  status:{registered:true,state:'CONNECTED',empresa:'SUMIPROD DE LA COSTA S.A.S.',sede:'Sede Principal',equipo:'CAJA-01',lastSync:'hace 3 s',version:'1.0.0',os:'windows',dataDir:'C:\\\\ProgramData\\\\TeraAgent',serverUrl:'wss://erp.midominio.com/ws/agent/',defaultUrl:'wss://api.grupotera.cloud/ws/agent/'},
   printers:[{name:'POS80',status:'READY',default:true,managed:true,enabled:true,role:'receipt'},{name:'HP LaserJet Pro',status:'READY',managed:true,enabled:true,role:'a4'},{name:'Kitchen Printer',status:'OFFLINE',managed:true,enabled:true,role:'kitchen'}],
   history:[{date:'20/07 10:43',doc:'FV-000254',printer:'POS80',status:'COMPLETADO'},{date:'20/07 10:38',doc:'FV-253',printer:'POS80',status:'COMPLETADO'},{date:'20/07 10:31',doc:'FV-252',printer:'HP',status:'COMPLETADO'},{date:'20/07 10:20',doc:'FV-251',printer:'POS80',status:'FALLIDO'}]
 };
@@ -387,7 +387,7 @@ function setStatus(state){
 async function loadStatus(){
   const s=await api('/api/status')||DEMO.status;
   if(!s.registered){
-    const u=document.getElementById('reg-url'); if(u && !u.value) u.value=s.serverUrl||'';
+    const u=document.getElementById('reg-url'); if(u && !u.value) u.value=s.serverUrl||s.defaultUrl||'';
     document.getElementById('regScreen').classList.remove('hidden');return;
   }
   document.getElementById('regScreen').classList.add('hidden');

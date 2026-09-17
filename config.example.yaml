@@ -2,6 +2,7 @@
 # 'server.url' vacío = modo local (sin backend): impresión disponible por CLI.
 server:
   url: ""            # ws://host:8765 o wss://erp/ws/agent/ ; vacío = modo local
+                     # (el config que crea el agente en Windows ya trae la URL del ERP)
   token: ""          # Token emitido por el Backend (no lo generes tú)
   insecure_skip_verify: false   # true SOLO en dev con wss y certificado self-signed
 agent:

@@ -86,7 +86,7 @@ cp config.example.yaml config.yaml   # edita a tu gusto
 
 ```yaml
 server:
-  url: ""            # vacío = modo local (sin backend)
+  url: "wss://api.grupotera.cloud/ws/agent/"   # la escribe el agente; "" = modo local
   token: ""
 printer:
   default: "XP-80"
@@ -152,8 +152,13 @@ eso cada modo la guarda donde solo el dueño legítimo puede tocarla:
 
 **Registro del equipo con el Token:**
 
-- *App de usuario:* tras instalar se abre el panel en <http://127.0.0.1:9180> para
-  pegar la URL y el Token. Accesible siempre desde la bandeja (*Abrir panel*).
+La **URL del servidor ya viene puesta** en el `config.yaml` que crea el agente
+(`ports.DefaultBackendURL`), así que dar de alta un equipo es pegar el Token y
+nada más. Solo hay que cambiarla en un cliente con su propio servidor.
+
+- *App de usuario:* tras instalar se abre el panel en <http://127.0.0.1:9180> con
+  la URL ya rellenada; se pega el Token y listo. Accesible siempre desde la
+  bandeja (*Abrir panel*).
 - *Servicio:* el panel deja los datos de conexión en **solo lectura** (cualquiera
   puede abrir el panel, así que registrar desde ahí saltaría la protección de la
   carpeta). El registro se hace en una **consola de administrador** —el instalador
@@ -161,7 +166,8 @@ eso cada modo la guarda donde solo el dueño legítimo puede tocarla:
 
   ```powershell
   "C:\Program Files\TeraAgent\tera-agent.exe" register --scope service
-  # pide URL y Token sin mostrarlo; o, para despliegue masivo:
+  # la URL sale ya propuesta: Intro la acepta. El Token se teclea sin eco.
+  # Para despliegue masivo:
   tera-agent register --scope service --url wss://erp/ws/agent/ --token-file C:\ruta\token.txt
   ```
 

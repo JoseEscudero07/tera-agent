@@ -98,8 +98,9 @@ func yamlStr(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", "''") + "'"
 }
 
-// DefaultYAML genera la configuración inicial para dataDir. server.url y el
-// Token quedan vacíos: se rellenan al registrar el equipo (panel en modo usuario,
+// DefaultYAML genera la configuración inicial para dataDir. La URL viene puesta
+// (ports.DefaultBackendURL: el mismo ERP para todos los equipos) y el Token queda
+// vacío: se rellena al registrar el equipo (panel en modo usuario,
 // `tera-agent register` en modo servicio). El log va a la subcarpeta logs\.
 func DefaultYAML(dataDir string) []byte {
 	logFile := filepath.Join(dataDir, LogSubdir, "tera-agent.log")
@@ -107,7 +108,7 @@ func DefaultYAML(dataDir string) []byte {
 		"# Tera Agent - configuracion. Registra el equipo desde el panel:",
 		"#   http://127.0.0.1:9180",
 		"server:",
-		"  url: '' # wss://tu-erp/ws/agent/ ; vacio = modo local",
+		"  url: " + yamlStr(ports.DefaultBackendURL) + " # vacio = modo local",
 		"  token: '' # lo emite el Backend; se rellena al registrar",
 		"printer:",
 		"  default: ''",

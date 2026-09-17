@@ -5,6 +5,16 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1.0.0/).
 ## [Unreleased]
 
 ### Changed
+- **Dar de alta un equipo es pegar el Token y nada más.** La URL del servidor es
+  la misma en todos los clientes, pero el `config.yaml` inicial la dejaba vacía y
+  el panel solo la sugería en el *placeholder*: había que copiarla a mano en cada
+  instalación. Ahora el config que crea el agente ya trae
+  `ports.DefaultBackendURL`, el campo del panel viene relleno (y, si el config es
+  de una versión anterior y no la trae, se rellena con `defaultUrl` del estado) y
+  `register --scope service` la propone para aceptarla con Intro. Se cambia igual
+  desde el panel, con `--url` o al compilar (`-X ...ports.DefaultBackendURL=...`).
+  De paso, un equipo **sin Token arranca en modo local**: antes, una URL sin Token
+  lo dejaba reintentando una conexión que el Backend siempre iba a rechazar.
 - **El logo de Tera sustituye a los iconos de relleno.** El icono de la bandeja
   era un cuadrado azul liso de 16x16 y el panel dibujaba un logotipo aproximado
   con rectángulos y una fuente del sistema. Ahora todo sale de la marca vectorial

@@ -158,10 +158,30 @@ func cmdRegister(args []string) error {
 		}
 	}
 
+	// El config se crea (o se lee) antes de preguntar: así la URL que ya trae
+	// —la del ERP por defecto en una instalación nueva— se acepta con Intro y el
+	// técnico solo tiene que pegar el Token.
+	dataDir, err := sc.DataDir()
+	if err != nil {
+		return err
+	}
+	if _, err := config.EnsureDefault(path, dataDir); err != nil {
+		return hintForWriteError(sc, err)
+	}
+	store := config.New(path)
+	cfg, err := store.Load()
+	if err != nil {
+		return err
+	}
+
 	urlv := strings.TrimSpace(urlFlag)
 	if urlv == "" {
-		fmt.Print("URL del servidor (wss://...): ")
-		urlv = readLine()
+		if cfg.BackendURL != "" {
+			fmt.Printf("URL del servidor [%s]: ", cfg.BackendURL)
+		} else {
+			fmt.Print("URL del servidor (wss://...): ")
+		}
+		urlv = strings.TrimSpace(readLine())
 	}
 
 	var token string
@@ -179,18 +199,6 @@ func cmdRegister(args []string) error {
 		return fmt.Errorf("register: token vacío")
 	}
 
-	dataDir, err := sc.DataDir()
-	if err != nil {
-		return err
-	}
-	if _, err := config.EnsureDefault(path, dataDir); err != nil {
-		return hintForWriteError(sc, err)
-	}
-	store := config.New(path)
-	cfg, err := store.Load()
-	if err != nil {
-		return err
-	}
 	if urlv != "" {
 		if err := config.ValidateBackendURL(urlv); err != nil {
 			return err

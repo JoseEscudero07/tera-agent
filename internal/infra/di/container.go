@@ -147,7 +147,10 @@ func Build(configPath string) (*App, error) {
 	}
 	machine := agent.NewMachine()
 	info := agent.NewInfo()
-	isLocal := cfg.BackendURL == ""
+	// Sin URL no hay servidor, y sin Token el handshake no puede prosperar: el
+	// equipo aun no esta dado de alta. En ambos casos se arranca en modo local
+	// en vez de reintentar una conexion que el Backend va a rechazar.
+	isLocal := cfg.BackendURL == "" || cfg.Token == ""
 
 	jobStore, err := store.New(filepath.Join(dd, "jobs.json"))
 	if err != nil {

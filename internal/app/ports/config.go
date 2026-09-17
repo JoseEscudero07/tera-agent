@@ -2,6 +2,15 @@ package ports
 
 import "time"
 
+// DefaultBackendURL es el ERP al que se conectan los equipos por defecto. Se
+// escribe en el config.yaml inicial para que dar de alta un equipo sea solo
+// pegar el Token: la URL es la misma en todos los clientes. Un cliente con su
+// propio servidor la cambia en el panel, con `register --url` o editando el
+// config; para una instalación entera se puede inyectar al compilar:
+//
+//	go build -ldflags "-X github.com/teraerp/tera-agent/internal/app/ports.DefaultBackendURL=wss://otro/ws/agent/"
+var DefaultBackendURL = "wss://api.grupotera.cloud/ws/agent/"
+
 // Config holds the static configuration the Agent needs to start. The Token is
 // issued by the Backend and only transmitted by the Agent; it is never
 // generated or renewed here. Runtime identity (company, branch, ...) is received

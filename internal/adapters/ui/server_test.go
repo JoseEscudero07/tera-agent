@@ -219,3 +219,25 @@ func TestTokenHint(t *testing.T) {
 		}
 	}
 }
+
+// La pantalla de registro rellena la URL sola: el técnico solo pega el Token.
+// El panel la saca del config y, si ese config viene de una versión anterior y
+// no la trae, de `defaultUrl`. Sin Token el equipo sigue sin estar registrado,
+// que es lo que hace que se muestre esa pantalla.
+func TestStatusOfreceLaURLPorDefecto(t *testing.T) {
+	s, _, _ := newTestServer(ports.Config{})
+
+	rec := httptest.NewRecorder()
+	s.status(rec, httptest.NewRequest(http.MethodGet, "/api/status", nil))
+
+	var got map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got["defaultUrl"] != ports.DefaultBackendURL {
+		t.Errorf("defaultUrl = %v; se esperaba %q", got["defaultUrl"], ports.DefaultBackendURL)
+	}
+	if got["registered"] != false {
+		t.Error("sin Token el equipo no puede estar registrado")
+	}
+}

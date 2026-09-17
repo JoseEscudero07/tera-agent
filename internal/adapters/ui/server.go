@@ -136,6 +136,9 @@ func (s *Server) status(w http.ResponseWriter, _ *http.Request) {
 		"os":           runtime.GOOS,
 		"dataDir":      s.d.DataDir,
 		"serverUrl":    s.d.Cfg.BackendURL,
+		// Para la pantalla de registro: si el config no trae URL (equipo que
+		// viene de una version anterior), el campo se rellena con esta.
+		"defaultUrl": ports.DefaultBackendURL,
 		// Defaults globales de calibración (0 = usar el default interno del agente).
 		"cutFeedDots":   s.d.Cfg.CutFeedDots,
 		"topMarginDots": s.d.Cfg.TopMarginDots,
