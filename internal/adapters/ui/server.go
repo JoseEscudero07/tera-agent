@@ -173,6 +173,9 @@ func (s *Server) printers(w http.ResponseWriter, r *http.Request) {
 			"topMarginDots": mp.TopMarginDots, // 0 = usar default
 			"pageMarginMM":  mp.PageMarginMM,  // 0 = usar default (impresoras de hoja)
 			"renderDPI":     mp.RenderDPI,     // 0 = usar default
+			// vector | image. Se resuelve con el mismo helper que usa la impresión,
+			// para que el panel muestre el modo con el que de verdad se imprime.
+			"pageMode": string(s.d.Cfg.PageModeOf(p.Name)),
 		})
 	}
 	writeJSON(w, out)
@@ -190,6 +193,7 @@ func (s *Server) printersManage(w http.ResponseWriter, r *http.Request) {
 		TopMarginDots int     `json:"topMarginDots"`
 		PageMarginMM  float64 `json:"pageMarginMM"`
 		RenderDPI     int     `json:"renderDPI"`
+		PageMode      string  `json:"pageMode"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&body)
 	if body.Name == "" {
@@ -219,14 +223,26 @@ func (s *Server) printersManage(w http.ResponseWriter, r *http.Request) {
 	if kind != ports.KindThermal && kind != ports.KindPDF {
 		kind = ports.KindThermal
 	}
+	// Mismo criterio para el modo: solo "image" se guarda; cualquier otra cosa es
+	// el modo por defecto (vectorial) y se guarda vacío, para no ensuciar el YAML
+	// de las térmicas con un modo que no les aplica. No hace falta olvidar el
+	// perfil: el cache aplica el modo al leerlo, así que vale desde el siguiente
+	// trabajo y el perfil que envió el Backend se conserva.
+	var pageMode ports.PageMode
+	if ports.PageMode(body.PageMode) == ports.PageModeImage {
+		pageMode = ports.PageModeImage
+	}
 	// Al cambiar el tipo debemos limpiar el perfil cacheado: el que había
 	// venía del kind anterior y ensureProfile lo respetaría en vez de recrearlo.
 	// Si el Backend nos envía un perfil real, sobrescribe el nuestro en el
 	// siguiente sync (ver lifecycle.printers).
-	// El DPI vive dentro del perfil cacheado, así que cambiarlo obliga a olvidarlo
-	// igual que un cambio de tipo: si no, el perfil viejo seguiría mandando.
-	if prev, ok := findManaged(s.d.Cfg.Printers, body.Name); ok &&
-		(prev.Kind != kind || prev.RenderDPI != body.RenderDPI) {
+	//
+	// Cambiar el DPI ya NO olvida el perfil: olvidarlo tiraba también el perfil
+	// que envió el Backend y los trabajos del ERP fallaban con "no profile" hasta
+	// la siguiente sincronización. Hoy el DPI no altera el perfil ejecutable
+	// (NormalizeForGDIRaster fija el mínimo raster), así que no hay nada que
+	// reconstruir.
+	if prev, ok := findManaged(s.d.Cfg.Printers, body.Name); ok && prev.Kind != kind {
 		s.d.Profiles.Forget(body.Name)
 	}
 	s.d.Cfg.Printers = upsertManaged(s.d.Cfg.Printers, ports.ManagedPrinter{
@@ -234,6 +250,7 @@ func (s *Server) printersManage(w http.ResponseWriter, r *http.Request) {
 		Kind:        kind,
 		CutFeedDots: body.CutFeedDots, TopMarginDots: body.TopMarginDots,
 		PageMarginMM: body.PageMarginMM, RenderDPI: body.RenderDPI,
+		PageMode: pageMode,
 	})
 	if err := s.persist(); err != nil {
 		writeErr(w, err.Error())
@@ -332,7 +349,8 @@ func (s *Server) testPrint(w http.ResponseWriter, r *http.Request) {
 
 // ensureProfile returns the printer's profile. Si el Backend no ha enviado
 // perfil todavía, instala uno por defecto según el tipo declarado por el
-// usuario en el panel (thermal → ESC/POS, pdf → GDI raster). Nunca sobrescribe
+// usuario en el panel (thermal → ESC/POS, pdf → PDF; en Windows el modo de la
+// impresora decide si va vectorial o por GDI raster). Nunca sobrescribe
 // un perfil real que ya venga del Backend.
 func (s *Server) ensureProfile(printer string) dp.PrinterProfile {
 	if p, err := s.d.Profiles.Profile(printer); err == nil && len(p.NativeFormats) > 0 {
@@ -369,23 +387,18 @@ func (s *Server) escposProfile(printer string) {
 }
 
 // pdfProfile instala un perfil por defecto para impresoras láser / inyección /
-// virtuales PDF. El único formato de dispositivo soportado en Windows para
-// esta familia es DeviceGDIRaster (rasterizar PDF y pintar por GDI).
+// virtuales PDF. Declara DevicePDF, igual que el perfil que envía el Backend para
+// una impresora "normal": el cache de perfiles lo traduce en Windows según el
+// modo de la impresora (vectorial con pdftocairo, o imagen por GDI raster).
 //
-// 600 DPI = calidad de facto de las láser (casi todas son nativas a 600; los
-// "1200 dpi" del marketing suelen ser REt interpolado). Ancho A4 a 600 dpi
-// ≈ 4960 dots. Poppler ajusta el alto conservando la relación real de la
-// página (Letter, A5, A3 salen bien también).
-//
-// Se probó 1200 dpi y el DIB (9920 wide) supera el límite interno de ancho
-// de origen que aceptan varios drivers HP y PCL (errno=158 al StretchDIBits).
-// 600 imprime nítido en todos los drivers Windows probados y es el balance
-// entre calidad visible y compatibilidad. Un ERP que catalogue una impresora
-// premium a 1200 dpi puede subir el DPI desde el catálogo del Backend.
+// El DPI solo tendría sentido en modo imagen y hoy no llega a aplicarse:
+// NormalizeForGDIRaster sube todo perfil raster al mínimo de 600 DPI / 4960 dots
+// y el rasterizador prioriza el ancho sobre el DPI. Se sigue guardando para no
+// cambiar el formato del perfil; ver la nota de RenderDPI en ports.Config.
 func (s *Server) pdfProfile(printer string) {
 	_, dpi := s.d.Cfg.PageTuning(printer)
 	s.d.Profiles.Set(dp.PrinterProfile{
-		PrinterID: printer, NativeFormats: []dp.DeviceFormat{dp.DeviceGDIRaster},
+		PrinterID: printer, NativeFormats: []dp.DeviceFormat{dp.DevicePDF},
 		// WidthDots: 0 a propósito. Antes se fijaba a 4960 (ancho de A4 a 600dpi),
 		// lo que forzaba CUALQUIER documento al ancho de un A4: un Letter o un A5
 		// salían estirados. Con 0, el rasterizador respeta el tamaño real de la
@@ -434,18 +447,29 @@ func findManaged(list []ports.ManagedPrinter, name string) (ports.ManagedPrinter
 	return ports.ManagedPrinter{}, false
 }
 
+// upsertManaged y removeManaged devuelven SIEMPRE un slice nuevo y nunca tocan
+// el array de list. Los resolutores que ApplyTuning instala en el motor (corte,
+// margen, modo de página) capturan una copia de Config cuyo Printers apunta al
+// mismo array que el panel: modificarlo en su sitio era una carrera de datos con
+// los trabajos que imprimían en ese momento, y removeManaged, al compactar,
+// podía hacerle ver a un trabajo la configuración de otra impresora.
 func upsertManaged(list []ports.ManagedPrinter, mp ports.ManagedPrinter) []ports.ManagedPrinter {
-	for i := range list {
-		if list[i].Name == mp.Name {
-			list[i] = mp
-			return list
+	out := make([]ports.ManagedPrinter, 0, len(list)+1)
+	replaced := false
+	for _, p := range list {
+		if p.Name == mp.Name {
+			p, replaced = mp, true
 		}
+		out = append(out, p)
 	}
-	return append(list, mp)
+	if !replaced {
+		out = append(out, mp)
+	}
+	return out
 }
 
 func removeManaged(list []ports.ManagedPrinter, name string) []ports.ManagedPrinter {
-	out := list[:0]
+	out := make([]ports.ManagedPrinter, 0, len(list))
 	for _, p := range list {
 		if p.Name != name {
 			out = append(out, p)
@@ -468,17 +492,6 @@ const (
 	minRenderDPI = 150
 	maxRenderDPI = 600
 )
-
-// forgetPageProfiles invalida el perfil cacheado de las impresoras de hoja, para
-// que se reconstruya con el DPI nuevo. Las térmicas no se tocan: su perfil no
-// depende de estos ajustes.
-func (s *Server) forgetPageProfiles() {
-	for _, p := range s.d.Cfg.Printers {
-		if p.Kind == ports.KindPDF && p.RenderDPI == 0 {
-			s.d.Profiles.Forget(p.Name)
-		}
-	}
-}
 
 func clampFloat(v, lo, hi float64) float64 {
 	if v < lo {
@@ -575,11 +588,8 @@ func (s *Server) config(w http.ResponseWriter, r *http.Request) {
 		if dpi != 0 { // 0 = usar el default interno
 			dpi = clamp(dpi, minRenderDPI, maxRenderDPI)
 		}
-		// Cambiar el DPI global invalida los perfiles cacheados de las impresoras
-		// de hoja que no tengan override propio.
-		if dpi != s.d.Cfg.RenderDPI {
-			s.forgetPageProfiles()
-		}
+		// Sin Forget, por la misma razón que en printersManage: olvidar perfiles
+		// tiraba los del Backend.
 		s.d.Cfg.RenderDPI = dpi
 	}
 

@@ -1,8 +1,10 @@
 package platform
 
 import (
+	"errors"
 	"testing"
 
+	"github.com/teraerp/tera-agent/internal/app/ports"
 	dp "github.com/teraerp/tera-agent/internal/domain/printing"
 )
 
@@ -110,6 +112,117 @@ func TestNormalize_EmptyProfile(t *testing.T) {
 	}
 }
 
+// --- Modo vectorial / imagen (NormalizeForWindows) ---
+
+// Lo que envía el ERP para una impresora "normal" y lo que el resolver necesita
+// en modo vectorial: PDF primero (pdftocairo) y raster detrás como red.
+func TestNormalizeForWindows_VectorPutsPDFBeforeRaster(t *testing.T) {
+	in := dp.PrinterProfile{
+		PrinterID:     "HP LaserJet",
+		NativeFormats: []dp.DeviceFormat{dp.DevicePDF},
+		DPI:           203,
+		WidthDots:     576,
+	}
+	out := NormalizeForWindows(in, ports.PageModeVector)
+	assertFormats(t, out.NativeFormats, dp.DevicePDF, dp.DeviceGDIRaster)
+	// Los mínimos raster se siguen aplicando: son los que usará el modo imagen
+	// si pdftocairo falta o el trabajo es una imagen PNG/JPEG.
+	if out.DPI != minRasterDPI || out.WidthDots != minRasterWidthDots {
+		t.Errorf("mínimos raster no aplicados: dpi=%d width=%d", out.DPI, out.WidthDots)
+	}
+}
+
+// El modo imagen es exactamente el comportamiento anterior.
+func TestNormalizeForWindows_ImageIsTheRasterPath(t *testing.T) {
+	in := dp.PrinterProfile{NativeFormats: []dp.DeviceFormat{dp.DevicePDF}, DPI: 203, WidthDots: 576}
+	got := NormalizeForWindows(in, ports.PageModeImage)
+	want := NormalizeForGDIRaster(in)
+	assertFormats(t, got.NativeFormats, want.NativeFormats...)
+	if got.DPI != want.DPI || got.WidthDots != want.WidthDots {
+		t.Errorf("modo imagen distinto del raster de siempre: %+v vs %+v", got, want)
+	}
+}
+
+// Un modo vacío (config antigua, CLI sin config) es vectorial.
+func TestNormalizeForWindows_EmptyModeIsVector(t *testing.T) {
+	out := NormalizeForWindows(dp.PrinterProfile{NativeFormats: []dp.DeviceFormat{dp.DevicePDF}}, "")
+	assertFormats(t, out.NativeFormats, dp.DevicePDF, dp.DeviceGDIRaster)
+}
+
+// Un perfil que ya venía como gdi-raster (perfiles locales antiguos) también
+// gana el camino vectorial en modo vector.
+func TestNormalizeForWindows_VectorUpgradesRasterOnlyProfile(t *testing.T) {
+	out := NormalizeForWindows(dp.PrinterProfile{NativeFormats: []dp.DeviceFormat{dp.DeviceGDIRaster}}, ports.PageModeVector)
+	assertFormats(t, out.NativeFormats, dp.DevicePDF, dp.DeviceGDIRaster)
+}
+
+// Las térmicas no son impresoras de página: ningún modo las toca.
+func TestNormalizeForWindows_LeavesThermalAlone(t *testing.T) {
+	in := dp.PrinterProfile{NativeFormats: []dp.DeviceFormat{dp.DeviceESCPOS}, DPI: 203, WidthDots: 576}
+	for _, mode := range []ports.PageMode{ports.PageModeVector, ports.PageModeImage} {
+		out := NormalizeForWindows(in, mode)
+		assertFormats(t, out.NativeFormats, dp.DeviceESCPOS)
+		if out.DPI != 203 || out.WidthDots != 576 {
+			t.Errorf("modo %s alteró la térmica: dpi=%d width=%d", mode, out.DPI, out.WidthDots)
+		}
+	}
+}
+
+// La prioridad entre formatos se conserva: térmica con respaldo de página.
+func TestNormalizeForWindows_PreservesPriority(t *testing.T) {
+	in := dp.PrinterProfile{NativeFormats: []dp.DeviceFormat{dp.DeviceESCPOS, dp.DevicePDF, dp.DeviceGDIRaster}}
+	out := NormalizeForWindows(in, ports.PageModeVector)
+	assertFormats(t, out.NativeFormats, dp.DeviceESCPOS, dp.DevicePDF, dp.DeviceGDIRaster)
+}
+
+// Cambiar el modo en el panel tiene que valer para el siguiente trabajo sin
+// volver a sincronizar ni olvidar el perfil del Backend. Es la razón de que el
+// cache normalice al leer.
+func TestNormalizingProfileCache_ModeChangeAppliesOnNextRead(t *testing.T) {
+	inner := &fakeCache{m: map[string]dp.PrinterProfile{}}
+	mode := ports.PageModeVector
+	cache := NormalizingProfileCache(inner, func(p dp.PrinterProfile) dp.PrinterProfile {
+		return NormalizeForWindows(p, mode)
+	})
+
+	cache.SetAll([]dp.PrinterProfile{{PrinterID: "HP", NativeFormats: []dp.DeviceFormat{dp.DevicePDF}}})
+
+	got, _ := cache.Profile("HP")
+	assertFormats(t, got.NativeFormats, dp.DevicePDF, dp.DeviceGDIRaster)
+
+	mode = ports.PageModeImage
+	got, _ = cache.Profile("HP")
+	assertFormats(t, got.NativeFormats, dp.DeviceGDIRaster)
+
+	// El perfil almacenado sigue siendo el del Backend, sin traducir.
+	assertFormats(t, inner.m["HP"].NativeFormats, dp.DevicePDF)
+}
+
+// Un perfil que no existe no se normaliza: el error tiene que llegar tal cual.
+func TestNormalizingProfileCache_PropagatesMissingProfile(t *testing.T) {
+	inner := &fakeCache{m: map[string]dp.PrinterProfile{}, err: errors.New("sin perfil")}
+	called := false
+	cache := NormalizingProfileCache(inner, func(p dp.PrinterProfile) dp.PrinterProfile { called = true; return p })
+	if _, err := cache.Profile("X"); err == nil {
+		t.Fatal("se perdió el error del cache interno")
+	}
+	if called {
+		t.Error("se normalizó un perfil inexistente")
+	}
+}
+
+func assertFormats(t *testing.T, got []dp.DeviceFormat, want ...dp.DeviceFormat) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Fatalf("NativeFormats = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("NativeFormats = %v, want %v", got, want)
+		}
+	}
+}
+
 // TestNormalizingProfileCache_EndToEnd emula lo que hace el lifecycle cuando
 // llega un ProfilesSync del Backend: pasa el perfil por el cache envuelto y
 // verifica que lo que sale por Profile() es lo que el resolver necesita.
@@ -168,15 +281,49 @@ func TestNormalizingProfileCache_ForgetPasses(t *testing.T) {
 	}
 }
 
-// fakeCache es un ProfileCache mínimo para tests: no traduce, sólo almacena.
-type fakeCache struct{ m map[string]dp.PrinterProfile }
+// fakeCache es un ProfileCache mínimo para tests: no traduce, sólo almacena. err,
+// si no es nil, se devuelve para los perfiles que no existen.
+type fakeCache struct {
+	m   map[string]dp.PrinterProfile
+	err error
+}
 
 func (c *fakeCache) Profile(id string) (dp.PrinterProfile, error) {
 	if p, ok := c.m[id]; ok {
 		return p, nil
 	}
-	return dp.PrinterProfile{}, nil
+	return dp.PrinterProfile{}, c.err
 }
-func (c *fakeCache) Set(p dp.PrinterProfile)       { c.m[p.PrinterID] = p }
-func (c *fakeCache) SetAll(ps []dp.PrinterProfile) { for _, p := range ps { c.m[p.PrinterID] = p } }
-func (c *fakeCache) Forget(id string)              { delete(c.m, id) }
+func (c *fakeCache) Set(p dp.PrinterProfile) { c.m[p.PrinterID] = p }
+func (c *fakeCache) SetAll(ps []dp.PrinterProfile) {
+	for _, p := range ps {
+		c.m[p.PrinterID] = p
+	}
+}
+func (c *fakeCache) Forget(id string) { delete(c.m, id) }
+
+// --- Nombres con tildes y Windows sin UTF-8 en manifiestos ---
+
+func TestEffectivePageMode(t *testing.T) {
+	cases := []struct {
+		name       string
+		configured ports.PageMode
+		printer    string
+		utf8ACP    bool
+		want       ports.PageMode
+	}{
+		{"vectorial, nombre ASCII, Windows viejo", ports.PageModeVector, "HP LaserJet", false, ports.PageModeVector},
+		{"vectorial, con tildes, Windows 10 1903+", ports.PageModeVector, "LÁSER Facturación Ñ", true, ports.PageModeVector},
+		// pdftocairo fallaría con "Printer not found": mejor imagen que nada.
+		{"vectorial, con tildes, Windows viejo", ports.PageModeVector, "LÁSER Facturación Ñ", false, ports.PageModeImage},
+		{"por defecto (vacío), con tildes, Windows viejo", "", "Impresora Oficina Ñ", false, ports.PageModeImage},
+		{"imagen elegida por el usuario siempre gana", ports.PageModeImage, "HP LaserJet", true, ports.PageModeImage},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := EffectivePageMode(c.configured, c.printer, c.utf8ACP); got != c.want {
+				t.Errorf("EffectivePageMode = %q, want %q", got, c.want)
+			}
+		})
+	}
+}

@@ -195,6 +195,33 @@ Engine.Print(ctx, job):
 > `PDF nativo` en una láser **según el perfil**, sin una sola condición sobre "PDF".
 > Soportar Zebra = añadir `ZPLRasterEncoder` + un perfil `zpl`; nada más cambia.
 
+### Impresoras de hoja en Windows: vectorial o imagen
+
+Windows no tiene un "CUPS nativo" que acepte PDF, así que el perfil `pdf` del ERP
+se traduce **al leerlo** (`platform.NormalizingProfileCache`) según el modo de la
+impresora (`ports.PageMode`, editable en el panel):
+
+| Modo | Formatos tras normalizar | Pipeline de un PDF |
+|---|---|---|
+| `vector` (defecto) | `[pdf, gdi-raster]` | PassThrough → `driver/pdfvector` (`pdftocairo -print -noshrink`) |
+| `image` | `[gdi-raster]` | PDFRaster → MultiPNG → `driver/gdi` (StretchDIBits) |
+
+- `gdi-raster` queda detrás de `pdf` en vectorial: los PNG/JPEG solo tienen ese
+  camino, y si `pdftocairo` no está instalado `pdfvector.Accepts(pdf)` es falso y
+  el resolver cae a imagen **al componer**, antes de enviar nada (nunca imprime
+  dos veces).
+- Se normaliza al leer, no al guardar, para que cambiar el modo en el panel valga
+  desde el siguiente trabajo sin olvidar el perfil que envió el ERP.
+- `platform.EffectivePageMode` manda a imagen las impresoras con nombre no ASCII
+  en Windows anteriores a 10 1903: `pdftocairo` usa las API ANSI y solo encuentra
+  esos nombres gracias al manifiesto UTF-8 que le pone `tools/popplerbundle`.
+
+Por qué vectorial por defecto: el camino raster decodificaba todas las páginas a
+~600 ppp dos veces en memoria (8,6 GB comprometidos con 29 páginas) y el driver
+GDI reducía las páginas con color a ~170 ppp para caber en el presupuesto de DIB
+de los drivers host-based. Con `pdftocairo`, 29 páginas en 25 s y 24 MB, con el
+texto idéntico al PDF.
+
 ## Ubicación (Clean Architecture)
 
 ```
@@ -203,10 +230,15 @@ internal/domain/printing/         Tipos + puertos (Renderer, Encoder, Driver,
 internal/app/print/               Engine (dispatcher) + Resolver + ProfileProvider
 internal/adapters/printing/
     rasterizer/poppler/           PopplerRasterizer (exec pdftoppm)   ← reemplazable
+    popplerbin/                   buscar/lanzar pdftoppm y pdftocairo (compartido)
     renderer/                     PDFRaster, Image, Text, PassThrough
     encoder/escpos/               ESCPOSRaster, ESCPOSText  (Go stdlib puro)
     encoder/zpl/                  (futuro)
     driver/cups/                  CUPSRawDriver, CUPSNativeDriver
+    driver/spooler/               Windows RAW (winspool)
+    driver/pdfvector/             Windows: PDF vectorial en láser (pdftocairo)
+    driver/gdi/                   Windows: páginas raster por GDI (modo imagen)
+    platform/                     drivers y normalización de perfiles por SO
     profile/                      ProfileProvider desde config del ERP
 ```
 

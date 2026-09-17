@@ -1,6 +1,6 @@
 //go:build !windows
 
-package poppler
+package popplerbin
 
 import "os/exec"
 

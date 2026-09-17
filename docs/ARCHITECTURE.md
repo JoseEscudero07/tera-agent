@@ -45,6 +45,16 @@ Implementaciones concretas e intercambiables de los ports. Cada backend de
 impresión y cada driver de dispositivo es un adapter independiente. El código
 específico de plataforma va detrás de **build tags**.
 
+Dos excepciones acotadas a "solo `infra/di` importa adapters", ambas dentro de
+`adapters/printing`:
+
+- `printing/platform` es la raíz de composición **por sistema operativo**: elige
+  los drivers de cada SO (spooler, pdfvector y GDI en Windows; CUPS en Linux/mac)
+  y el normalizador de perfiles. `infra/di` solo llama a `platform`.
+- `printing/popplerbin` es una utilidad hoja compartida (buscar y lanzar
+  `pdftoppm`/`pdftocairo`) para que `rasterizer/poppler` y `driver/pdfvector` no
+  se importen entre sí.
+
 ### infra/di
 Composition root. Construye los adapters concretos y los inyecta. Es el único
 paquete autorizado a importar `adapters`.

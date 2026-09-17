@@ -153,3 +153,62 @@ func TestResolver_EmptyNativeFormats(t *testing.T) {
 		t.Fatalf("error should mention the printer, got: %q", err.Error())
 	}
 }
+
+// --- Impresoras de página en Windows: [pdf, gdi-raster] (modo vectorial) ---
+
+// pageResolver arma lo que DI compone en Windows: el renderer PDF→raster y el
+// encoder de páginas para GDI, más los drivers que se pidan.
+func pageResolver(drivers ...dp.Driver) dp.Resolver {
+	renderers := []dp.Renderer{
+		fakeRenderer{src: dp.FormatPDF, produces: dp.ArtifactRaster},
+		fakeRenderer{src: dp.FormatPNG, produces: dp.ArtifactRaster},
+	}
+	encoders := []dp.Encoder{fakeEncoder{accepts: dp.ArtifactRaster, produces: dp.DeviceGDIRaster}}
+	return NewResolver(renderers, encoders, drivers)
+}
+
+var vectorProfile = dp.PrinterProfile{
+	PrinterID:     "HP LaserJet",
+	NativeFormats: []dp.DeviceFormat{dp.DevicePDF, dp.DeviceGDIRaster},
+}
+
+// Con pdftocairo disponible, un PDF va entero al driver vectorial: sin
+// rasterizar ni codificar nada.
+func TestResolver_VectorProfileSendsPDFUntouched(t *testing.T) {
+	r := pageResolver(fakeDriver{accepts: dp.DevicePDF}, fakeDriver{accepts: dp.DeviceGDIRaster})
+	pipe, err := r.Resolve(dp.FormatPDF, vectorProfile)
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if !pipe.Driver.Accepts(dp.DevicePDF) {
+		t.Fatal("no eligió el driver PDF")
+	}
+	if pipe.Renderer.Produces() == dp.ArtifactRaster {
+		t.Error("el PDF se rasteriza en vez de pasar tal cual")
+	}
+}
+
+// Sin pdftocairo el driver vectorial no acepta pdf: el trabajo tiene que salir
+// igual por el modo imagen, decidido antes de imprimir nada.
+func TestResolver_VectorProfileFallsBackToRasterWithoutPDFDriver(t *testing.T) {
+	r := pageResolver(fakeDriver{accepts: dp.DeviceGDIRaster})
+	pipe, err := r.Resolve(dp.FormatPDF, vectorProfile)
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if pipe.Encoder.Produces() != dp.DeviceGDIRaster {
+		t.Fatalf("encoder = %s, want gdi-raster", pipe.Encoder.Produces())
+	}
+}
+
+// Una imagen PNG en una láser en modo vectorial no tiene camino PDF: usa GDI.
+func TestResolver_VectorProfilePrintsImagesThroughRaster(t *testing.T) {
+	r := pageResolver(fakeDriver{accepts: dp.DevicePDF}, fakeDriver{accepts: dp.DeviceGDIRaster})
+	pipe, err := r.Resolve(dp.FormatPNG, vectorProfile)
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if pipe.Encoder.Produces() != dp.DeviceGDIRaster {
+		t.Fatalf("encoder = %s, want gdi-raster", pipe.Encoder.Produces())
+	}
+}

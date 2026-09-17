@@ -329,6 +329,11 @@ func buildUIServer(app *di.App) *ui.Server {
 					return marginMM
 				})
 			}
+			// Modo vectorial/imagen: el cache de perfiles lo consulta al leer
+			// cada perfil, así que vale desde el siguiente trabajo.
+			if app.SetPageMode != nil {
+				app.SetPageMode(c.PageModeOf)
+			}
 			// El resolver de roles vive junto al motor y también depende del
 			// snapshot de impresoras. Refrescarlo en el mismo callback evita
 			// tener que reiniciar el Agent tras cambiar un rol en el panel.

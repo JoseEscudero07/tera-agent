@@ -1,11 +1,12 @@
 // Lógica de normalización de perfiles independiente del SO. Vive fuera de los
 // archivos con build tag para que se pueda ejercitar desde tests corriendo en
-// Linux/mac sin cross-compilation. platform_windows.go la llama; en Linux/mac
-// NormalizeProfile es identidad y esta función no se usa en runtime — pero
-// existe para que la CI cubra el path Windows.
+// Linux/mac sin cross-compilation. platform_windows.go la llama; en Linux/mac no
+// hay normalizador (ProfileNormalizerForOS devuelve nil) y estas funciones no se
+// usan en runtime — pero existen aquí para que la CI cubra el path Windows.
 package platform
 
 import (
+	"github.com/teraerp/tera-agent/internal/app/ports"
 	dp "github.com/teraerp/tera-agent/internal/domain/printing"
 )
 
@@ -19,9 +20,73 @@ const (
 	minRasterWidthDots = 4960
 )
 
+// PageModeResolver devuelve el modo de impresión vigente de una impresora de
+// página. Es una función y no un valor porque el panel puede cambiarlo en
+// caliente.
+type PageModeResolver func(printerID string) ports.PageMode
+
+// NormalizeForWindows traduce un perfil pensado por el ERP para "PDF nativo"
+// (las impresoras "normales" llegan como native_formats ["pdf"]) a lo que
+// Windows sabe ejecutar, según el modo de la impresora:
+//
+//   - PageModeVector (defecto): [pdf, gdi-raster]. El driver vectorial imprime el
+//     PDF tal cual. gdi-raster queda detrás por dos motivos: los trabajos PNG/JPEG
+//     solo tienen ese camino, y si pdftocairo no está instalado el driver
+//     vectorial no acepta pdf y el resolver cae al modo imagen al componer el
+//     pipeline —antes de enviar nada, así que nunca se imprime dos veces.
+//   - PageModeImage: [gdi-raster], el camino raster de siempre.
+//
+// Los perfiles que no son de página (térmicas, etiquetas) no se tocan. Función
+// pura: testeable desde cualquier SO.
+func NormalizeForWindows(p dp.PrinterProfile, mode ports.PageMode) dp.PrinterProfile {
+	out := NormalizeForGDIRaster(p)
+	if mode == ports.PageModeImage {
+		return out
+	}
+	// NormalizeForGDIRaster ya dejó un único gdi-raster donde estaba el primer
+	// pdf/gdi-raster: el PDF va justo delante, con la misma prioridad relativa
+	// respecto a los demás formatos.
+	formats := make([]dp.DeviceFormat, 0, len(out.NativeFormats)+1)
+	for _, f := range out.NativeFormats {
+		if f == dp.DeviceGDIRaster {
+			formats = append(formats, dp.DevicePDF)
+		}
+		formats = append(formats, f)
+	}
+	out.NativeFormats = formats
+	return out
+}
+
+// EffectivePageMode decide el modo con el que se imprime de verdad.
+//
+// El modo vectorial pasa el nombre de la impresora a pdftocairo, que lo usa con
+// las funciones ANSI de Windows. El instalador le pone un manifiesto UTF-8 para
+// que los nombres con tildes o ñ funcionen, pero Windows solo respeta ese
+// manifiesto desde Windows 10 1903 (utf8ACP). En un Windows anterior, una
+// impresora con nombre no ASCII fallaría con "Printer not found" en cada
+// trabajo: mejor imprimirla en modo imagen que no imprimir.
+func EffectivePageMode(configured ports.PageMode, printerID string, utf8ACP bool) ports.PageMode {
+	if configured == ports.PageModeImage {
+		return ports.PageModeImage
+	}
+	if !utf8ACP && !isASCII(printerID) {
+		return ports.PageModeImage
+	}
+	return ports.PageModeVector
+}
+
+func isASCII(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] >= 0x80 {
+			return false
+		}
+	}
+	return true
+}
+
 // NormalizeForGDIRaster traduce un perfil pensado por el ERP para "PDF
-// nativo" al camino real que sabemos ejecutar en Windows: rasterizar con
-// Poppler y pintar con GDI. La transformación:
+// nativo" al camino raster de Windows (modo imagen): rasterizar con Poppler y
+// pintar con GDI. La transformación:
 //
 //   - Cada DevicePDF en NativeFormats se sustituye por DeviceGDIRaster.
 //   - Duplicados eliminados preservando la prioridad (primer aparecido gana).

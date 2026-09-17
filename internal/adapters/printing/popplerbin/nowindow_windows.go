@@ -1,6 +1,6 @@
 //go:build windows
 
-package poppler
+package popplerbin
 
 import (
 	"os/exec"
@@ -10,9 +10,9 @@ import (
 )
 
 // hideConsole evita que Windows abra una ventana de consola negra al lanzar
-// pdftoppm.
+// la herramienta de Poppler (pdftoppm, pdftocairo).
 //
-// Por qué ocurre: pdftoppm.exe es una aplicación de consola. Cuando el proceso
+// Por qué ocurre: pdftoppm.exe y pdftocairo.exe son aplicaciones de consola. Cuando el proceso
 // padre YA tiene consola (el binario `tera-agent.exe`) el hijo la hereda y no se
 // ve nada raro. Pero el binario de la bandeja se compila con -H=windowsgui y no
 // tiene consola, así que Windows le crea una NUEVA al hijo — y aparece un cuadro

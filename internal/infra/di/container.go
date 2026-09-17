@@ -7,6 +7,7 @@ import (
 	"crypto/tls"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 
 	"github.com/teraerp/tera-agent/internal/adapters/communication/local"
 	"github.com/teraerp/tera-agent/internal/adapters/communication/websocket"
@@ -59,6 +60,33 @@ type App struct {
 	// SetPageMargin reinstala el resolutor de margen de página en los drivers que
 	// lo soportan, para que el panel pueda cambiarlo sin reiniciar el Agent.
 	SetPageMargin func(func(printerID string) float64)
+	// SetPageMode reinstala el resolutor del modo vectorial/imagen de las
+	// impresoras de página; aplica desde el siguiente trabajo.
+	SetPageMode func(func(printerID string) ports.PageMode)
+}
+
+// pageModes guarda el resolutor vigente del modo de impresión de cada impresora
+// de página. El panel lo sustituye al guardar mientras los trabajos lo leen desde
+// otras goroutines, de ahí el atomic.
+type pageModes struct {
+	fn atomic.Pointer[func(string) ports.PageMode]
+}
+
+func newPageModes(fn func(string) ports.PageMode) *pageModes {
+	m := &pageModes{}
+	m.Set(fn)
+	return m
+}
+
+// Set instala fn; nil vuelve al modo por defecto para todas.
+func (m *pageModes) Set(fn func(string) ports.PageMode) { m.fn.Store(&fn) }
+
+// Of devuelve el modo de printerID.
+func (m *pageModes) Of(printerID string) ports.PageMode {
+	if fn := m.fn.Load(); fn != nil && *fn != nil {
+		return (*fn)(printerID)
+	}
+	return ports.PageModeVector
 }
 
 // pageMarginSetter lo implementan los drivers que colocan la página respecto al
@@ -124,7 +152,8 @@ func Build(configPath string) (*App, error) {
 	disc := platform.NewDiscovery(log)
 	bin := newBinarizer(0)
 	drivers := platform.Drivers(log, bin)
-	engine, profiles := newEngine(log, drivers, bin)
+	modes := newPageModes(cfg.PageModeOf)
+	engine, profiles := newEngine(log, drivers, bin, modes.Of)
 	// Per-printer cut calibration from config (feed before cut, top margin), so a
 	// client can tune the cut per printer without recompiling.
 	engine.SetTuning(cfg.PrinterTuning)
@@ -168,6 +197,7 @@ func Build(configPath string) (*App, error) {
 		SetPageMargin: func(fn func(printerID string) float64) {
 			applyPageMargin(drivers, fn)
 		},
+		SetPageMode: modes.Set,
 	}, nil
 }
 
@@ -199,7 +229,8 @@ func BuildPrinting(log ports.Logger, opts PrintOptions) (*appprint.Engine, dp.Pr
 	if opts.OutFile != "" {
 		drivers = []dp.Driver{driverfile.New(opts.OutFile, log)}
 	}
-	engine, profiles := newEngine(log, drivers, bin)
+	// La CLI no tiene config de impresoras gestionadas: modo por defecto.
+	engine, profiles := newEngine(log, drivers, bin, nil)
 	return engine, profiles, platform.NewDiscovery(log)
 }
 
@@ -220,8 +251,9 @@ func newBinarizer(bias int) dp.Binarizer {
 }
 
 // newEngine assembles renderers, encoders and the resolver over the given
-// drivers. bin is the shared binarizer (also injected into the drivers).
-func newEngine(log ports.Logger, drivers []dp.Driver, bin dp.Binarizer) (*appprint.Engine, dp.ProfileCache) {
+// drivers. bin is the shared binarizer (also injected into the drivers). modeOf
+// resuelve el modo vectorial/imagen de las impresoras de página (nil = vectorial).
+func newEngine(log ports.Logger, drivers []dp.Driver, bin dp.Binarizer, modeOf func(string) ports.PageMode) (*appprint.Engine, dp.ProfileCache) {
 	raster := poppler.New(log)
 
 	renderers := []dp.Renderer{
@@ -239,10 +271,11 @@ func newEngine(log ports.Logger, drivers []dp.Driver, bin dp.Binarizer) (*apppri
 	}
 
 	// El cache envuelve el memoryCache con normalización específica de plataforma:
-	// en Windows traduce DevicePDF→DeviceGDIRaster para que perfiles del Backend
-	// pensados para "PDF nativo" (láser/inyección) encajen en el driver GDI. En
-	// Linux/mac ProfileNormalizerForOS devuelve nil y el wrapping no aplica.
-	profiles := platform.NormalizingProfileCache(profile.NewMemoryCache(), platform.ProfileNormalizerForOS())
+	// en Windows los perfiles "PDF nativo" del Backend (láser/inyección) se
+	// traducen al leerlos según el modo de cada impresora: vectorial (pdftocairo)
+	// o imagen (GDI raster). En Linux/mac ProfileNormalizerForOS devuelve nil y el
+	// wrapping no aplica.
+	profiles := platform.NormalizingProfileCache(profile.NewMemoryCache(), platform.ProfileNormalizerForOS(modeOf))
 	engine := appprint.NewEngine(appprint.NewResolver(renderers, encoders, drivers), profiles, log)
 	return engine, profiles
 }

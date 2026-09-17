@@ -26,6 +26,8 @@ type wireManagedPrinter struct {
 	// Solo para kind=pdf. omitempty para no ensuciar el YAML de las térmicas.
 	PageMarginMM float64 `yaml:"page_margin_mm,omitempty"`
 	RenderDPI    int     `yaml:"render_dpi,omitempty"`
+	// vector | image. Vacío = vector.
+	PageMode string `yaml:"page_mode,omitempty"`
 }
 
 // New returns a ConfigStore backed by the YAML file at path.
@@ -85,6 +87,7 @@ func (f *fileStore) Load() (ports.Config, error) {
 			Kind:        ports.PrinterKind(p.Kind),
 			CutFeedDots: p.CutFeedDots, TopMarginDots: p.TopMarginDots,
 			PageMarginMM: p.PageMarginMM, RenderDPI: p.RenderDPI,
+			PageMode: ports.PageMode(p.PageMode),
 		})
 	}
 	return ports.Config{
@@ -127,6 +130,7 @@ func (f *fileStore) Save(c ports.Config) error {
 			Kind:        string(p.Kind),
 			CutFeedDots: p.CutFeedDots, TopMarginDots: p.TopMarginDots,
 			PageMarginMM: p.PageMarginMM, RenderDPI: p.RenderDPI,
+			PageMode: string(p.PageMode),
 		})
 	}
 	w.Heartbeat.Seconds = int(c.HeartbeatInterval / time.Second)

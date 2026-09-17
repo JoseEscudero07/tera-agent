@@ -105,8 +105,44 @@ type ManagedPrinter struct {
 	// página (Kind == KindPDF). 0 = usar el default global.
 	PageMarginMM float64
 	// RenderDPI overrides the rasterisation quality for this printer. Solo aplica
-	// a impresoras de página. 0 = usar el default global.
+	// a impresoras de página en modo imagen. 0 = usar el default global.
+	//
+	// OJO: hoy no tiene efecto. En Windows el perfil raster se sube siempre a
+	// 600 DPI / 4960 dots (platform.NormalizeForGDIRaster) y el rasterizador
+	// prioriza el ancho sobre el DPI.
 	RenderDPI int
+	// PageMode decide cómo llega un documento a esta impresora de página en
+	// Windows. Vacío = PageModeVector.
+	PageMode PageMode
+}
+
+// PageMode es cómo se imprime un PDF en una impresora de página (láser,
+// inyección) de Windows. En Linux/macOS no aplica: CUPS recibe el PDF tal cual.
+type PageMode string
+
+const (
+	// PageModeVector dibuja el PDF directamente en el driver de la impresora
+	// (pdftocairo): texto y vectores a la resolución nativa del equipo, poca
+	// memoria y tamaño real. Es el modo por defecto.
+	PageModeVector PageMode = "vector"
+	// PageModeImage rasteriza cada página y la envía como bitmap por GDI. Se
+	// conserva como opción de compatibilidad para drivers que no se lleven bien
+	// con el modo vectorial; aquí aplican PageMarginMM y RenderDPI.
+	PageModeImage PageMode = "image"
+)
+
+// PageModeOf resuelve el modo de una impresora: el que tenga configurado o, si
+// no está gestionada o no lo declara, PageModeVector.
+func (c Config) PageModeOf(printerID string) PageMode {
+	for _, p := range c.Printers {
+		if p.Name == printerID {
+			if p.PageMode == PageModeImage {
+				return PageModeImage
+			}
+			break
+		}
+	}
+	return PageModeVector
 }
 
 // KindOf resolves the declared kind for a printer, or thermal if unmanaged /

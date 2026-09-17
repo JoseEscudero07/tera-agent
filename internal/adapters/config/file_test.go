@@ -106,6 +106,7 @@ func TestSaveLoad_ManagedPrintersAndPreservedFields(t *testing.T) {
 			{Name: "POS80", Role: ports.RoleFacturacion, Enabled: true, Kind: ports.KindThermal, CutFeedDots: 248, TopMarginDots: 8},
 			{Name: "Kitchen", Role: ports.RoleCocina, Enabled: false, Kind: ports.KindThermal},
 			{Name: "HP LaserJet", Role: ports.RoleFacturacion, Enabled: true, Kind: ports.KindPDF},
+			{Name: "Samsung M2020", Role: ports.RoleOficina, Enabled: true, Kind: ports.KindPDF, PageMode: ports.PageModeImage, RenderDPI: 450},
 		},
 		// Fields that Save used to drop silently.
 		DataDir:            "/var/lib/tera",
@@ -122,8 +123,8 @@ func TestSaveLoad_ManagedPrintersAndPreservedFields(t *testing.T) {
 		t.Fatalf("Load error: %v", err)
 	}
 
-	if len(got.Printers) != 3 {
-		t.Fatalf("Printers len = %d, want 3 (%+v)", len(got.Printers), got.Printers)
+	if len(got.Printers) != 4 {
+		t.Fatalf("Printers len = %d, want 4 (%+v)", len(got.Printers), got.Printers)
 	}
 	for i := range orig.Printers {
 		if got.Printers[i] != orig.Printers[i] {
@@ -132,6 +133,9 @@ func TestSaveLoad_ManagedPrintersAndPreservedFields(t *testing.T) {
 	}
 	if got.Printers[2].Kind != ports.KindPDF {
 		t.Errorf("HP LaserJet Kind = %q, want %q", got.Printers[2].Kind, ports.KindPDF)
+	}
+	if got.Printers[3].PageMode != ports.PageModeImage {
+		t.Errorf("Samsung PageMode = %q, want image (modo imagen perdido al guardar)", got.Printers[3].PageMode)
 	}
 	if got.DataDir != orig.DataDir {
 		t.Errorf("DataDir not preserved: %q", got.DataDir)
@@ -155,8 +159,8 @@ func TestPrinterTuning_PerPrinterOverridesGlobal(t *testing.T) {
 		CutFeedDots:   232,
 		TopMarginDots: 16,
 		Printers: []ports.ManagedPrinter{
-			{Name: "XPrinter", CutFeedDots: 248},        // overrides feed, inherits top margin
-			{Name: "POS80"},                             // inherits both globals
+			{Name: "XPrinter", CutFeedDots: 248}, // overrides feed, inherits top margin
+			{Name: "POS80"},                      // inherits both globals
 		},
 	}
 	// Per-printer feed override wins, top margin falls back to global.

@@ -32,5 +32,6 @@ func OSName() string { return runtime.GOOS }
 
 // ProfileNormalizerForOS en Linux/mac devuelve nil: CUPS acepta DevicePDF/PNG
 // y cualquier DeviceGDIRaster no tendría driver aquí. Pasar nil hace que el
-// wrapper se comporte como el cache pelado y no se pierda ni un ciclo.
-func ProfileNormalizerForOS() ProfileNormalizer { return nil }
+// wrapper se comporte como el cache pelado y no se pierda ni un ciclo. El modo
+// vectorial/imagen es cosa de Windows, así que modeOf se ignora.
+func ProfileNormalizerForOS(_ PageModeResolver) ProfileNormalizer { return nil }

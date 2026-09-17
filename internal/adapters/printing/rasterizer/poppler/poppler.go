@@ -7,19 +7,17 @@ package poppler
 import (
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
 	"image"
 	"image/png"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"runtime"
 	"sort"
 	"strconv"
 	"sync"
 	"time"
 
+	"github.com/teraerp/tera-agent/internal/adapters/printing/popplerbin"
 	"github.com/teraerp/tera-agent/internal/app/ports"
 	dp "github.com/teraerp/tera-agent/internal/domain/printing"
 )
@@ -75,15 +73,13 @@ func (r *Rasterizer) Rasterize(ctx context.Context, pdf []byte, opts dp.RasterOp
 	runCtx, cancel := context.WithTimeout(ctx, pdftoppmTimeout)
 	defer cancel()
 	bin := resolvePdftoppm(r.log)
-	cmd := exec.CommandContext(runCtx, bin, args...)
-	// Sin esto, el binario de la bandeja (sin consola propia) hace que Windows
-	// abra una ventana negra en cada rasterizado.
-	hideConsole(cmd)
-	cmd.Env = append(os.Environ(), "LC_ALL=C")
+	// Command lanza sin ventana de consola: sin eso, el binario de la bandeja
+	// (sin consola propia) hace que Windows abra una ventana negra por rasterizado.
+	cmd := popplerbin.Command(runCtx, bin, args...)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		return nil, runError(bin, err, stderr.String())
+	if err := popplerbin.Run(cmd); err != nil {
+		return nil, popplerbin.RunError(bin, err, stderr.String())
 	}
 
 	files, err := filepath.Glob(prefix + "*.png")
@@ -114,54 +110,14 @@ func (r *Rasterizer) Rasterize(ctx context.Context, pdf []byte, opts dp.RasterOp
 
 var _ dp.Rasterizer = (*Rasterizer)(nil)
 
-// dllNotFoundExit es STATUS_DLL_NOT_FOUND (0xC0000135) visto como código de
-// salida: Windows no llegó a ejecutar el binario porque le falta una DLL.
-const dllNotFoundExit = -1073741515
-
-// runError explica por qué falló pdftoppm.
-//
-// El caso 0xC0000135 merece mensaje propio: el proceso no arranca siquiera, así
-// que stderr viene vacío y el error crudo ("exit status 0xc0000135") no dice nada
-// a quien da soporte en el equipo de un cliente. En la práctica siempre significa
-// lo mismo: falta el runtime de Visual C++ que pdftoppm y varias DLLs de poppler
-// importan, y que no viene incluido en el bundle de poppler.
-func runError(bin string, err error, stderr string) error {
-	var ee *exec.ExitError
-	if errors.As(err, &ee) && ee.ExitCode() == dllNotFoundExit {
-		return dllNotFoundError(bin)
-	}
-	if stderr == "" {
-		return fmt.Errorf("poppler: pdftoppm (%s): %w", bin, err)
-	}
-	return fmt.Errorf("poppler: pdftoppm (%s): %w: %s", bin, err, stderr)
-}
-
-// dllNotFoundError redacta el diagnóstico de 0xC0000135 con la acción concreta a
-// tomar, que es lo que necesita quien está delante del equipo del cliente.
-func dllNotFoundError(bin string) error {
-	return fmt.Errorf("poppler: %s no pudo arrancar: falta una DLL requerida (0xC0000135). "+
-		"Normalmente es el runtime de Visual C++: comprueba que msvcp140.dll, "+
-		"vcruntime140.dll y vcruntime140_1.dll estén junto a pdftoppm.exe, o instala "+
-		"el Microsoft Visual C++ Redistributable (x64)", bin)
-}
-
-// resolvePdftoppm finds the pdftoppm binary. Order:
-//  1. TERA_PDFTOPPM env var (absolute path). Useful for tests and admins.
-//  2. Same directory as the running executable — allows shipping pdftoppm.exe
-//     next to tera-agent.exe on Windows without editing PATH (services run as
-//     LocalSystem and don't see per-user PATH).
-//  3. A ./poppler/bin/ subfolder next to the executable — convenient for the
-//     Windows installer, which drops the poppler bundle there.
-//  4. exec.LookPath sobre el PATH del proceso. En Windows, cuando LookPath
-//     resuelve por el CWD, Go 1.19+ marca ErrDot y devuelve la ruta igual:
-//     la aceptamos convertida a absoluta, así funciona aunque el usuario
-//     lance el Agent desde la carpeta donde vive pdftoppm.exe.
+// resolvePdftoppm devuelve la ruta de pdftoppm (ver popplerbin.Find para el
+// orden de búsqueda).
 //
 // Cached: printing on the hot path calls this per page. Recompute is cheap
 // pero innecesario, y ensucia el log cuando ya hemos elegido una ruta.
 func resolvePdftoppm(log ports.Logger) string {
 	pdftoppmOnce.Do(func() {
-		pdftoppmPath = findPdftoppm()
+		pdftoppmPath = popplerbin.Find("pdftoppm")
 		// Una sola línea al primer uso: hace trivial diagnosticar futuros
 		// "no lo encuentra" (¿está el .exe junto al Agent? ¿cayó al PATH?).
 		if log != nil {
@@ -175,44 +131,3 @@ var (
 	pdftoppmOnce sync.Once
 	pdftoppmPath string
 )
-
-func findPdftoppm() string {
-	bin := "pdftoppm"
-	if runtime.GOOS == "windows" {
-		bin = "pdftoppm.exe"
-	}
-
-	if p := os.Getenv("TERA_PDFTOPPM"); p != "" {
-		if _, err := os.Stat(p); err == nil {
-			return p
-		}
-	}
-
-	if exe, err := os.Executable(); err == nil {
-		dir := filepath.Dir(exe)
-		candidates := []string{
-			filepath.Join(dir, bin),
-			filepath.Join(dir, "poppler", "bin", bin),
-			filepath.Join(dir, "bin", bin),
-		}
-		for _, c := range candidates {
-			if _, err := os.Stat(c); err == nil {
-				return c
-			}
-		}
-	}
-
-	// PATH del proceso. Aceptamos ErrDot (resolución vía CWD) porque el
-	// nombre "pdftoppm" no es ambiguo: el usuario lo instaló a propósito y
-	// que el binario esté en el mismo directorio desde el que se lanzó el
-	// Agent es un caso legítimo. Convertimos a ruta absoluta para que
-	// exec.CommandContext no vuelva a chocar con la misma protección.
-	if p, err := exec.LookPath(bin); p != "" && (err == nil || errors.Is(err, exec.ErrDot)) {
-		if abs, aerr := filepath.Abs(p); aerr == nil {
-			return abs
-		}
-		return p
-	}
-
-	return bin
-}

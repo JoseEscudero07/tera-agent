@@ -79,3 +79,41 @@ func TestPageTuningNoInterfiereConElCorte(t *testing.T) {
 		t.Errorf("página = (%v, %d); se esperaba (8, 400)", m, d)
 	}
 }
+
+// Sin nada configurado, toda impresora de página imprime en vectorial: es el
+// modo que no degrada el texto.
+func TestPageModeOfDefaultsToVector(t *testing.T) {
+	var c Config
+	if got := c.PageModeOf("HP"); got != PageModeVector {
+		t.Errorf("sin config = %q, want %q", got, PageModeVector)
+	}
+	c.Printers = []ManagedPrinter{{Name: "HP", Kind: KindPDF}}
+	if got := c.PageModeOf("HP"); got != PageModeVector {
+		t.Errorf("gestionada sin modo = %q, want %q", got, PageModeVector)
+	}
+}
+
+func TestPageModeOfPerPrinter(t *testing.T) {
+	c := Config{Printers: []ManagedPrinter{
+		{Name: "Samsung M2020", Kind: KindPDF, PageMode: PageModeImage},
+		{Name: "HP", Kind: KindPDF, PageMode: PageModeVector},
+	}}
+	if got := c.PageModeOf("Samsung M2020"); got != PageModeImage {
+		t.Errorf("Samsung = %q, want image", got)
+	}
+	if got := c.PageModeOf("HP"); got != PageModeVector {
+		t.Errorf("HP = %q, want vector", got)
+	}
+	if got := c.PageModeOf("otra"); got != PageModeVector {
+		t.Errorf("no gestionada = %q, want vector", got)
+	}
+}
+
+// Un valor desconocido en el YAML (errata a mano) no debe sacar a la impresora
+// del modo por defecto.
+func TestPageModeOfUnknownValueIsVector(t *testing.T) {
+	c := Config{Printers: []ManagedPrinter{{Name: "HP", PageMode: "imagen"}}}
+	if got := c.PageModeOf("HP"); got != PageModeVector {
+		t.Errorf("valor desconocido = %q, want vector", got)
+	}
+}

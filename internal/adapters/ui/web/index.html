@@ -385,6 +385,7 @@ async function loadStatus(){
   if(s.topMarginDots) DEFAULTS.topMarginDots=s.topMarginDots;
   document.getElementById('ver').textContent=s.version||'1.0.0';
   document.getElementById('os').textContent=s.os||'—';
+  if(s.os) AGENT_OS=s.os;
   document.querySelectorAll('.v-ver').forEach(e=>e.textContent=s.version||'1.0.0');
   document.querySelectorAll('.v-os').forEach(e=>e.textContent=s.os||'—');
   // NO precargar aquí el formulario de config: lo haría en cada refresco (4s) y
@@ -416,6 +417,13 @@ const ROLES={'':'Sin rol',caja:'Caja',facturacion:'Facturación',cocina:'Cocina'
 // Tipo físico de impresora. thermal = ticketera 58/80mm ESC/POS.
 // pdf = láser / inyección / impresora virtual PDF (se imprime vía GDI en Windows).
 const KINDS={thermal:'Térmica (ESC/POS)',pdf:'Láser / PDF'};
+// Cómo llega un documento a una láser/inyección en Windows. Vectorial dibuja el
+// PDF en el driver (texto nítido, poca memoria); Imagen lo convierte a bitmap y
+// queda como opción para drivers que no se lleven bien con el vectorial.
+const PAGE_MODES={vector:'Vectorial (recomendado)',image:'Imagen (compatibilidad)'};
+// El modo vectorial/imagen solo existe en Windows; en Linux/macOS CUPS recibe el
+// PDF tal cual y el selector no haría nada. Se actualiza con /api/status.
+let AGENT_OS='windows';
 let PRINTERS=[]; // última lista cargada (para leer estado actual en las acciones)
 // Defaults globales de calibración (para los placeholders); se refrescan en loadStatus.
 const DEFAULTS={cutFeedDots:232,topMarginDots:16,pageMarginMM:0,renderDPI:300};
@@ -440,11 +448,18 @@ function printerRowFull(p){
   const roleOpts=Object.entries(ROLES).map(([v,l])=>`<option value="${v}"${(p.role||'')===v?' selected':''}>${l}</option>`).join('');
   const kindOpts=Object.entries(KINDS).map(([v,l])=>`<option value="${v}"${kind===v?' selected':''}>${l}</option>`).join('');
   const n=esc(p.name);
+  const pageMode=p.pageMode==='image'?'image':'vector';
+  const modeOpts=Object.entries(PAGE_MODES).map(([v,l])=>`<option value="${v}"${pageMode===v?' selected':''}>${l}</option>`).join('');
+  // Margen y DPI solo existen en modo imagen: en vectorial la impresora imprime
+  // a tamaño real y a su propia resolución, así que mostrarlos engañaría.
+  const pageModes=AGENT_OS==='windows';
+  const imageCal=pageMode==='image'?`
+    <label class="cal" title="Margen desde el borde del papel, en mm. 0 o vacío = página completa (el hardware recorta su margen físico, ~4mm). Vacío = ${DEFAULTS.pageMarginMM} mm por defecto.">▭<input type="number" min="0" max="50" step="0.5" placeholder="${DEFAULTS.pageMarginMM}" value="${p.pageMarginMM||''}" onchange="setPageCal('${n}','pageMarginMM',this.value)"></label>
+    <label class="cal" title="Calidad de rasterizado en DPI (150-600). Más DPI = más nítido y más lento. Vacío = ${DEFAULTS.renderDPI} por defecto.">◎<input type="number" min="150" max="600" step="50" placeholder="${DEFAULTS.renderDPI}" value="${p.renderDPI||''}" onchange="setPageCal('${n}','renderDPI',this.value)"></label>`:'';
   const cal=isThermal?`
     <label class="cal" title="Avance de papel antes del corte, en dots (1mm≈8). Vacío = ${DEFAULTS.cutFeedDots} por defecto.">✂<input type="number" min="0" max="2000" placeholder="${DEFAULTS.cutFeedDots}" value="${p.cutFeedDots||''}" onchange="setCal('${n}','cutFeedDots',this.value)"></label>
     <label class="cal" title="Margen superior a dejar, en dots. Vacío = ${DEFAULTS.topMarginDots} por defecto.">⬆<input type="number" min="0" placeholder="${DEFAULTS.topMarginDots}" value="${p.topMarginDots||''}" onchange="setCal('${n}','topMarginDots',this.value)"></label>`:`
-    <label class="cal" title="Margen desde el borde del papel, en mm. 0 o vacío = página completa (el hardware recorta su margen físico, ~4mm). Vacío = ${DEFAULTS.pageMarginMM} mm por defecto.">▭<input type="number" min="0" max="50" step="0.5" placeholder="${DEFAULTS.pageMarginMM}" value="${p.pageMarginMM||''}" onchange="setPageCal('${n}','pageMarginMM',this.value)"></label>
-    <label class="cal" title="Calidad de rasterizado en DPI (150-600). Más DPI = más nítido y más lento. Vacío = ${DEFAULTS.renderDPI} por defecto.">◎<input type="number" min="150" max="600" step="50" placeholder="${DEFAULTS.renderDPI}" value="${p.renderDPI||''}" onchange="setPageCal('${n}','renderDPI',this.value)"></label>`;
+    ${pageModes?`<select class="sel" title="Cómo se envían los documentos a esta impresora. Vectorial: texto nítido a la resolución de la impresora. Imagen: cada página como bitmap, para drivers que den problemas con el vectorial." onchange="setPageMode('${n}',this.value)">${modeOpts}</select>`:''}${imageCal}`;
   const drawer=isThermal?`<button class="btn" onclick="openDrawer('${n}')">Cajón</button>`:'';
   return `<div class="prow${enabled?'':' off'}">
     <div class="toggle sm${enabled?' on':''}" title="Activar impresora" onclick="toggleEnabled('${n}')"></div>
@@ -469,7 +484,7 @@ async function loadPrinters(){
 }
 
 // --- Acciones de impresoras ---
-function findP(name){return PRINTERS.find(p=>p.name===name)||{name,role:'',kind:'thermal',enabled:true,cutFeedDots:0,topMarginDots:0,pageMarginMM:0,renderDPI:0};}
+function findP(name){return PRINTERS.find(p=>p.name===name)||{name,role:'',kind:'thermal',enabled:true,cutFeedDots:0,topMarginDots:0,pageMarginMM:0,renderDPI:0,pageMode:'vector'};}
 // Envía SIEMPRE todos los campos (partiendo del estado actual + los cambios) para
 // no pisar calibración/tipo/rol al togglear activo o cambiar cualquier otro.
 async function applyManage(name,changes){
@@ -483,6 +498,7 @@ async function applyManage(name,changes){
     topMarginDots:p.topMarginDots||0,
     pageMarginMM:p.pageMarginMM||0,
     renderDPI:p.renderDPI||0,
+    pageMode:p.pageMode||'vector',
     ...changes,
   };
   await api('/api/printers/manage',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
@@ -491,6 +507,7 @@ async function applyManage(name,changes){
 function toggleEnabled(name){const p=findP(name);applyManage(name,{enabled:!(p.enabled!==false)});}
 function setRole(name,role){applyManage(name,{role});toast('ok','Rol actualizado',`${name}: ${ROLES[role]||role}`);}
 function setKind(name,kind){applyManage(name,{kind});toast('ok','Tipo actualizado',`${name}: ${KINDS[kind]||kind}`);}
+function setPageMode(name,pageMode){applyManage(name,{pageMode});toast('ok','Modo de impresión',`${name}: ${PAGE_MODES[pageMode]||pageMode}`);}
 function setCal(name,field,value){
   const v=Math.max(0,parseInt(value,10)||0);
   applyManage(name,{[field]:v});
