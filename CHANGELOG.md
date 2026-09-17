@@ -5,6 +5,198 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1.0.0/).
 ## [Unreleased]
 
 ### Added
+- **Impresión vectorial en láser / inyección (Windows)** con `pdftocairo -print`
+  (`driver/pdfvector`), modo por defecto. El texto llega al driver como texto y
+  la impresora lo imprime a su resolución nativa; carta sale en carta y A4 en A4.
+  Medido en Windows 11 limpio con facturas del ERP (fpdf2): 29 páginas en 25 s y
+  24 MB, donde el camino raster no terminaba (8,6 GB comprometidos) y las páginas
+  con color llegaban a la impresora a ~170 ppp.
+- **Modo por impresora "Vectorial / Imagen"** en el panel (`page_mode` en
+  `config.yaml`). Imagen es el camino GDI raster anterior, como opción de
+  compatibilidad. El cambio aplica al siguiente trabajo sin reiniciar. Cae solo a
+  imagen si falta `pdftocairo.exe`, para PNG/JPEG y para impresoras con tildes o
+  ñ en Windows anteriores a 10 1903.
+- `tools/popplerbundle`: empaqueta `pdftoppm.exe` y `pdftocairo.exe` con **solo**
+  las DLLs que cargan (imports y carga diferida) y pone a `pdftocairo.exe` un
+  manifiesto UTF-8 para que encuentre impresoras con tildes o ñ. Lo usan
+  `build-release.ps1` y la compilación desde Linux.
+- `windows-verify.ps1` comprueba que `pdftocairo.exe` está, arranca, soporta
+  `-print` y lleva el manifiesto UTF-8 (20 comprobaciones).
+- **Instalador de Windows** (`installer/tera-agent.iss`, Inno Setup 6): un
+  `TeraAgent-Setup-<versión>.exe` que empaqueta el Agent, el binario de bandeja y
+  **poppler completo** (`pdftoppm.exe` + sus 26 DLLs), configura el arranque
+  automático, crea los accesos al panel y registra un desinstalador en
+  "Aplicaciones". Actualiza in-place conservando la configuración y el Token.
+  Soporta instalación silenciosa (`/VERYSILENT /MODE=service|user`).
+- Asistente con **modo de ejecución excluyente** — app de usuario (bandeja +
+  panel al iniciar sesión) o servicio de Windows. Son excluyentes porque dos
+  agentes con el mismo Token duplicarían cada impresión.
+- `scripts/build-release.ps1`: compila los dos binarios con la versión inyectada
+  por `-ldflags`, **verifica que el binario reporte esa versión**, prepara el
+  bundle de poppler, compila el instalador y emite `SHA256SUMS.txt` para el
+  manifiesto `/agent/version` del ERP.
+- `.github/workflows/release.yml`: release por tag semver, compilado en
+  `windows-latest`, con release en borrador.
+- Job de `windows-latest` en CI: los adapters de Windows (driver GDI, spooler,
+  servicio) están detrás de build tags y hasta ahora **nunca se probaban** — el
+  job de Ubuntu solo los cross-compilaba.
+- `scripts/windows-verify.ps1`: verificación de aceptación de una instalación
+  (19 comprobaciones). Cubre explícitamente los tres fallos que llegaron a
+  clientes: runtime de Visual C++ ausente del bundle, `pdftoppm` que no arranca, y
+  `config.yaml` con rutas entre comillas dobles. Distingue *omitida* de *correcta*
+  para no dar por verificado lo que no se pudo comprobar.
+- `docs/ACCEPTANCE.md`: cómo validar el instalador en una VM limpia (Windows
+  Sandbox o VM), pasos manuales, prueba de actualización in-place y dónde mirar
+  cuando falla. Documenta por qué el equipo de desarrollo ocultaba estos fallos.
+- El instalador despliega `testpage.pdf` (600 bytes) para que la verificación y el
+  soporte puedan ejercitar el pipeline PDF→raster→ESC/POS sin gastar papel.
+- `docs/RELEASE.md`: versionamiento SemVer, flujo de release y el contrato del
+  manifiesto de actualización para implementar el lado Django.
+- Módulo de auto-actualización (`domain/update`, `app/update`,
+  `adapters/update/{manifest,selfupdate}`): manifiesto del Backend, comparación
+  semver, cliente HTTPS y descarga con verificación SHA256 obligatoria.
+  **Parcial**: falta el `Applier` que reemplaza el binario y el cableado en `di`.
+
+### Changed
+- **Poppler 26.02 → 26.09** en el instalador y en `release.yml`, con el SHA256 del
+  zip fijado y verificado antes de descomprimir (ver Security).
+- El instalador ya no copia `*.dll` del bundle de poppler: `tools/popplerbundle`
+  elige 30 ficheros de los 143 de 26.09. El runtime de Visual C++ sale del propio
+  bundle (26.07+); solo se toma de System32 si el bundle no lo trae.
+- `platform.NormalizingProfileCache` normaliza al **leer** el perfil, no al
+  guardarlo, para que el modo de impresión cambie en caliente sin olvidar el
+  perfil que envió el ERP.
+- El perfil local de una láser (`ui.pdfProfile`) declara `pdf`, como el del ERP.
+  En Linux, "Probar" en una láser ahora sale por CUPS en vez de fallar por falta
+  de driver `gdi-raster`.
+- `rasterizer/poppler` usa el nuevo paquete compartido `printing/popplerbin`
+  (búsqueda del ejecutable, consola oculta y mensajes de error).
+- Los errores de poppler ya no arrastran los avisos `No display font for …`.
+- **Panel · Configuración: el Token ya se puede cambiar.** Antes el único campo de
+  Token estaba en la pantalla de registro, que solo aparece si el equipo NO está
+  registrado: una vez vinculado, cambiar la credencial exigía editar `config.yaml`
+  a mano (en modo servicio, dentro de `ProgramData`). Ahora está en Configuración,
+  como campo de contraseña. El Token **nunca se envía al navegador**: `GET
+  /api/config` devuelve solo `tokenSet` y los últimos 4 caracteres, y dejar el
+  campo vacío al guardar significa "no lo cambies".
+- Nuevo `POST /api/unregister` y botón **"Desvincular este equipo"**: borra Token y
+  URL y vuelve a la pantalla de registro. Antes eso solo se conseguía por
+  accidente, vaciando el campo URL y guardando. No toca las impresoras.
+- Los cambios de conexión (URL o Token) desde Configuración reconectan el agente
+  al momento, reutilizando el mismo mecanismo que el registro. El resto de ajustes
+  se aplican en vivo sin reiniciar.
+- `AgentVersion` pasa de `const "1.0.0"` a `var "0.0.0-dev"`, inyectable con
+  `-ldflags`. El valor por defecto delata los binarios compilados fuera del
+  build de release en vez de fingir una versión válida.
+- El servicio de Windows se crea con **arranque automático retrasado**,
+  dependencia del **spooler** y **acciones de recuperación** (reintento a los 5s,
+  15s y luego cada minuto, incluidas las salidas no-crash). Antes, un fallo
+  dejaba el POS sin imprimir hasta un reinicio manual.
+- `scripts/windows-install.ps1` deja de copiar ficheros a mano y pasa a ser el
+  desplegador desatendido sobre el instalador. La versión anterior copiaba solo
+  `tera-agent.exe`, lo que **dejaba la impresión de PDF rota** en cualquier
+  equipo sin poppler en el `PATH`.
+
+### Removed
+- Tres interruptores del panel que no hacían nada: "Reconectar automáticamente",
+  "Iniciar con Windows" y "Minimizar a la bandeja". Solo cambiaban un color — no
+  los leía `saveConfig()`, no existían en `/api/config` ni en `ports.Config`. En su
+  lugar, Configuración muestra el **modo de arranque** como texto de solo lectura,
+  porque quién arranca el Agent lo decide el instalador, no la configuración.
+- El handler global `.toggle → classList.toggle('on')`, que además de sobrar era
+  una trampa: sobrescribía el `onclick` de cualquier `.toggle` del DOM, así que si
+  hubiera llegado a ejecutarse tras renderizar la lista de impresoras habría
+  dejado el interruptor de "activar impresora" siendo solo un cambio de color.
+
+### Fixed
+- Carrera de datos entre el panel y los trabajos en curso: el panel modificaba
+  `Config.Printers` en su sitio mientras los resolutores del motor lo leían
+  (detectado con `go test -race`).
+- Cambiar los DPI en el panel olvidaba el perfil de la impresora, incluido el del
+  ERP, y sus trabajos fallaban hasta la siguiente sincronización.
+- `windows-verify.ps1` daba un falso fallo de "reintentos del servicio" en
+  Windows en español (buscaba `RESTART` en la salida traducida de `sc.exe`); ahora
+  lee `FailureActions` del registro.
+- El instalador empaquetaba como licencia de Poppler el aviso de poppler-data;
+  ahora lleva la GPL v2 (`COPYING.gpl2`).
+- **Una ventana de consola negra parpadeaba en cada impresión de PDF.**
+  `pdftoppm.exe` es una aplicación de consola; cuando la lanza el binario de la
+  bandeja (`-H=windowsgui`, sin consola propia), Windows le crea una ventana
+  nueva. Ahora se lanza con `CREATE_NO_WINDOW`. No afecta a la captura de
+  stderr, así que los errores de poppler se siguen recogiendo igual.
+- **La impresión de PDF fallaba con `0xc0000135` en equipos de cliente.** El bundle
+  llevaba las 26 DLLs de poppler pero **no el runtime de Visual C++**
+  (`msvcp140.dll`, `vcruntime140.dll`, `vcruntime140_1.dll`), que importan
+  `pdftoppm.exe` y varias DLLs del propio poppler (`cairo`, `Lerc`, `expat`…). En
+  una máquina de desarrollo existen en System32 porque el VC++ Redistributable está
+  instalado; en un cliente limpio no, y el proceso muere con
+  `STATUS_DLL_NOT_FOUND` sin ejecutar nada. Ahora se despliegan **app-local** junto
+  a `pdftoppm.exe` (el cargador de Windows busca primero ahí), así que no hay que
+  instalar el Redistributable ni pedir reinicio. El build falla si no las encuentra.
+- El error de `pdftoppm` para `0xC0000135` ahora explica la causa y la acción, en vez
+  de propagar `exit status 0xc0000135` con stderr vacío — el proceso no llega a
+  arrancar, así que no hay nada que poppler pueda decir por su cuenta.
+- **El instalador generaba una configuración que impedía arrancar.** La plantilla
+  escribía las rutas entre comillas **dobles**, y en YAML las comillas dobles
+  interpretan escapes: `"C:\ProgramData\TeraAgent"` contiene `\P` y `\T`, que no son
+  escapes válidos. El agente moría con `found unknown escape character` antes de
+  levantar nada. Solo se veía en instalaciones **nuevas** — donde ya existía un
+  `config.yaml` previo, el instalador lo respeta y el fallo quedaba oculto. Ahora
+  se usan comillas simples (contenido literal) mediante una función `YamlStr`.
+- **Un fallo de arranque era completamente invisible.** `main` escribía el error en
+  `os.Stderr` y hacía `os.Exit(1)`; en el binario de la bandeja (`-H=windowsgui`) no
+  hay consola, así que el síntoma para el cliente era "se instala pero nunca abre,
+  no sale nada", imposible de diagnosticar en remoto. Ahora `fatalStartup` deja el
+  error en `%ProgramData%\TeraAgent\startup-error.log` **y** muestra un diálogo
+  nativo (omitido bajo el SCM, donde la sesión 0 no puede mostrar UI).
+- **El Agent nunca conseguía conectar: HTTP 403 en el upgrade WebSocket.** El dial
+  se hacía sin cabeceras, y Django Channels —envuelto en
+  `AllowedHostsOriginValidator`— rechaza con 403 cualquier upgrade sin `Origin`,
+  antes incluso de resolver la ruta. El Agent quedaba en bucle
+  `CONNECTING → DISCONNECTED → RECONNECTING` sin llegar a autenticarse nunca, así
+  que el token no tenía nada que ver. Ahora se envía `Origin` derivado del propio
+  host del Backend (`wss://host/…` → `https://host`). El contrato no cambia: el
+  Token sigue viajando solo en el mensaje `authenticate`.
+- **El log en fichero no escribía nada en el binario de la bandeja.** El logger usa
+  `io.MultiWriter(os.Stderr, fichero)`, y en un ejecutable compilado con
+  `-H=windowsgui` no hay consola: `os.Stderr` es un handle inválido y cada
+  escritura falla. `io.MultiWriter` aborta en el primer error, así que **el fichero
+  quedaba a 0 bytes** — justo en el binario que corre en los equipos de los
+  clientes, dejando el soporte a ciegas. Ahora stderr va envuelto en un writer
+  best-effort cuyos fallos no cortan la cadena.
+- **`POST /api/config` borraba la URL del Backend.** Los campos se asignaban como
+  valores planos, así que guardar el formulario sin `url` (o con el campo vacío)
+  dejaba `BackendURL: ""` y desregistraba el equipo en silencio. Ahora todos los
+  campos son opcionales: lo que el panel no envía, no se toca. Con test de
+  regresión.
+- La URL del Backend no se validaba: un valor con una errata se guardaba tal cual y
+  el agente entraba en un bucle de reconexión sin explicar por qué. Ahora se exige
+  esquema `wss://` (o `ws://` en desarrollo) y host, tanto al registrar como al
+  guardar.
+- **El panel decía "Los cambios se aplicaron" siempre**, incluso cuando el POST
+  fallaba: `saveConfig()` no miraba la respuesta. Ahora muestra el mensaje real del
+  agente, y distingue entre aplicado en vivo y reconectando.
+- `registrar()` usaba el helper `api()`, que se traga los errores y activa el modo
+  demo: un registro rechazado mostraba "Registrado (demo)". Ahora comprueba la
+  respuesta y muestra el error del servidor.
+- `restartSelf` no detectaba el SCM de Windows: tras registrar el equipo desde el
+  panel, un Agent corriendo como servicio lanzaba un **proceso duplicado** en vez
+  de dejar que el gestor lo reiniciase. Ahora sale con código distinto de 0, que
+  es lo que el SCM interpreta como fallo para aplicar la recuperación.
+
+### Security
+- Poppler 26.02 tenía un desbordamiento de memoria en `pdftoppm`
+  (CVE-2026-10118, corregido en 26.06): un PDF manipulado podía ejecutar código,
+  como SYSTEM en modo servicio. Actualizado a 26.09.
+- `release.yml` verifica el SHA256 del zip de poppler (repositorio de terceros)
+  antes de usarlo.
+- La búsqueda de `pdftoppm`/`pdftocairo` solo acepta rutas absolutas con el nombre
+  exacto: ya no resuelve por el directorio de trabajo (`exec.ErrDot`) ni variantes
+  de PATHEXT como `pdftocairo.exe.bat`, que permitían ejecutar un binario plantado.
+- Los procesos de poppler usan `WaitDelay`: un proceso hijo del driver de
+  impresora que retenga stderr ya no deja el trabajo colgado más allá del timeout.
+
+### Added (histórico)
 - Scaffold inicial con Clean Architecture (domain / app / adapters / infra).
 - Máquina de estados del Agent con transiciones validadas y observadores.
 - Ports de `printing`, `device` y `comms`; dispatcher y lifecycle con handshake

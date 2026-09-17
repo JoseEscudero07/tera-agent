@@ -7,10 +7,30 @@ Agente de impresión multiplataforma. Este manual cubre **Linux** y **Windows**.
 | Plataforma | Imprescindible | Para imprimir PDF térmico |
 |---|---|---|
 | **Linux/macOS** | CUPS (`lp`, `lpstat`) — normalmente ya instalado | `poppler-utils` (`pdftoppm`) |
-| **Windows** | Spooler de impresión (incluido en Windows) | `poppler` para Windows (`pdftoppm.exe` en el PATH) |
+| **Windows 10 1903+ / 11** | Spooler de impresión (incluido en Windows) | nada: el instalador empaqueta poppler |
+
+> **Windows:** el instalador empaqueta dos herramientas de poppler 26.09:
+>
+> - `pdftoppm.exe` convierte PDF en imagen para las **térmicas** (ESC/POS) y para
+>   las láser en **modo imagen**.
+> - `pdftocairo.exe` imprime PDF en **láser / inyección en modo vectorial** (el
+>   modo por defecto; ver [§7](#modo-de-impresión-de-las-láser-vectorial-o-imagen)).
+>
+> No basta con copiar los `.exe`: importan `poppler.dll`, `cairo.dll`, ICU, el
+> runtime de Visual C++… `tools/popplerbundle` copia exactamente las DLLs que
+> cargan (30 ficheros de los 143 del bundle), leyendo sus imports. El runtime de
+> Visual C++ va *app-local* junto a los `.exe`, así que el cliente no necesita
+> instalar el Redistributable — sin él, en un equipo limpio, poppler muere con
+> `0xc0000135` (`STATUS_DLL_NOT_FOUND`) sin ejecutar nada.
+>
+> Todo va en `poppler\bin\`; el Agent lo encuentra ahí sin tocar el `PATH` del
+> sistema — importante, porque el servicio corre como LocalSystem y no ve el
+> `PATH` del usuario. Para forzar otra copia: variables `TERA_PDFTOPPM` y
+> `TERA_PDFTOCAIRO` con la **ruta absoluta** al `.exe`.
 
 - `raw`, `text` y ESC/POS **no** requieren poppler.
-- Solo la conversión **PDF → ESC/POS** usa `pdftoppm` (rasterizador, reemplazable).
+- La conversión **PDF → ESC/POS** usa `pdftoppm` (rasterizador, reemplazable).
+- En Windows, las láser en modo vectorial usan `pdftocairo`.
 
 ### Instalar poppler
 
@@ -102,23 +122,123 @@ journalctl -u tera-agent -f          # logs
 
 El servicio necesita acceso a CUPS (usuario `root` o del grupo `lp`).
 
-## 7. Servicio de Windows
+## 7. Windows: instalador (recomendado)
 
-Con `tera-agent.exe` y los scripts de `scripts/` en una carpeta, en **PowerShell
-como Administrador**:
+La forma normal de instalar en un equipo cliente es el instalador
+`TeraAgent-Setup-<versión>.exe`: **doble clic → siguiente → listo**. Incluye todo
+lo necesario, incluido poppler; el cliente no tiene que instalar dependencias.
 
-```powershell
-.\windows-install.ps1                  # copia a Program Files, crea y arranca el servicio
+Durante el asistente se elige el **modo de ejecución**. Son excluyentes a
+propósito: el WebSocket contra el ERP debe tener un único dueño en el equipo, o
+el ERP recibiría cada impresión duplicada.
+
+| Modo | Cuándo arranca | Bandeja y panel | Para qué |
+|---|---|---|---|
+| **App de usuario** (por defecto) | al iniciar sesión en Windows | sí | punto de venta atendido |
+| **Servicio de Windows** | con el equipo, sin que nadie inicie sesión | no (los servicios no pueden mostrar bandeja) | equipos desatendidos |
+
+Tras la instalación se abre el panel en <http://127.0.0.1:9180> para **registrar
+el equipo con el Token** del ERP. El panel queda accesible siempre: desde el
+icono de la bandeja (*Abrir panel*) o desde el acceso directo del menú Inicio.
+
+Qué deja en el equipo:
+
+```
+C:\Program Files\TeraAgent\tera-agent.exe        servicio, CLI y diagnóstico
+C:\Program Files\TeraAgent\tera-agent-tray.exe   mismo programa sin consola (bandeja)
+C:\Program Files\TeraAgent\poppler\bin\          pdftoppm.exe + sus DLLs
+C:\ProgramData\TeraAgent\config.yaml             configuración y Token
+C:\ProgramData\TeraAgent\tera-agent.log          log rotativo
 ```
 
-Esto instala el servicio **TeraAgent** (arranque automático), con la config en
-`C:\ProgramData\TeraAgent\config.yaml`. Gestión manual:
+Se desinstala como cualquier programa: **Configuración → Aplicaciones → Tera
+Agent**. La configuración y los logs se conservan, para que una reinstalación no
+obligue a volver a registrar el equipo.
+
+### Compilar el instalador
+
+Requiere **Inno Setup 6** (una sola vez: `winget install JRSoftware.InnoSetup`) y
+el bundle de poppler para Windows.
+
+```powershell
+.\scripts\build-release.ps1 -Version 1.0.0
+```
+
+Genera en `dist\`: los dos binarios, `TeraAgent-Setup-1.0.0.exe` y
+`SHA256SUMS.txt` (los hashes que necesita el manifiesto del ERP). Ver
+[RELEASE.md](RELEASE.md).
+
+Por defecto espera poppler en `C:\Program Files\poppler-26.09.0\` (bundle de
+`github.com/oschwartz10612/poppler-windows`); si está en otro sitio, pásalo con
+`-PopplerBin <bundle>\Library\bin -PopplerLicense <bundle>\share\poppler\COPYING.gpl2`.
+Ojo con la licencia: `share\poppler\COPYING` es el aviso de poppler-data, no la
+GPL de Poppler.
+
+El script llama a `go run ./tools/popplerbundle`, que además de elegir las DLLs
+pone a `pdftocairo.exe` un **manifiesto UTF-8**: sin él, las impresoras con tildes
+o ñ en el nombre fallan con `Printer not found` en modo vectorial.
+
+### Modo de impresión de las láser: vectorial o imagen
+
+En **Panel → Impresoras**, cada impresora de tipo *Láser / PDF* tiene un selector:
+
+| Modo | Cómo imprime | Cuándo |
+|---|---|---|
+| **Vectorial** (por defecto) | `pdftocairo` dibuja el PDF en el driver de la impresora: el texto llega como texto y la impresora lo imprime a su resolución nativa. Carta sale en carta y A4 en A4. | Siempre que funcione |
+| **Imagen** (compatibilidad) | Cada página se rasteriza y se envía como bitmap por GDI. Aplican el margen y los DPI de la impresora. | Solo si el driver de una impresora concreta da problemas con el vectorial |
+
+Medido en Windows 11 limpio con facturas del ERP (fpdf2): 29 páginas en **25 s y
+24 MB** en vectorial; en modo imagen la misma factura agotaba la memoria de un
+equipo de 4 GB, y las páginas con color (logo, cabecera) llegaban a la impresora
+a ~170 ppp. El cambio de modo aplica al siguiente trabajo, sin reiniciar. En
+`config.yaml` queda como `page_mode: image` (el vectorial no se escribe).
+
+Casos que caen solos a modo imagen, sin fallar:
+
+- `pdftocairo.exe` no está instalado.
+- Trabajos PNG/JPEG (no tienen camino vectorial).
+- Impresoras con tildes o ñ en el nombre en un Windows **anterior a 10 1903**,
+  que no respeta el manifiesto UTF-8.
+
+Los PDF de fpdf2 con fuentes estándar (Helvetica) **no incrustan la fuente**: en
+Windows se imprimen con Arial, que es la misma que muestran Acrobat, Edge o Chrome
+al abrir el PDF. Los avisos `No display font for 'Symbol' / 'ArialNarrow'…` del
+log son fuentes que el documento no usa.
+
+### Antes de llevarlo a un cliente
+
+Prueba el instalador en una **VM limpia** y pasa la verificación automática:
+
+```bash
+powershell -ExecutionPolicy Bypass -File .\scripts\windows-verify.ps1
+```
+
+Debe terminar con `Fallos: 0`. Los pasos manuales (reinicio, bandeja, impresión
+real) y el porqué de todo esto están en [ACCEPTANCE.md](ACCEPTANCE.md).
+
+### Despliegue en muchos equipos (silencioso)
+
+```powershell
+.\scripts\windows-install.ps1 -Mode service     # o -Mode user
+.\scripts\windows-install.ps1 -Url https://tu-erp/agent/download/latest/windows/amd64
+.\scripts\windows-install.ps1 -Uninstall
+```
+
+O directamente sobre el instalador:
+
+```powershell
+TeraAgent-Setup-1.0.0.exe /VERYSILENT /SUPPRESSMSGBOXES /MODE=service
+```
+
+### Gestión manual del servicio
 
 ```powershell
 tera-agent.exe service install|uninstall|start|stop --config <ruta>
-# o desinstalar todo:
-.\windows-uninstall.ps1
 ```
+
+El servicio se crea con **arranque automático retrasado**, dependencia del
+**spooler de impresión** y **reintentos automáticos** (5s, 15s, luego cada
+minuto), para que un POS vuelva a imprimir solo sin que nadie reinicie el equipo.
 
 ## 8. Solución de problemas
 
