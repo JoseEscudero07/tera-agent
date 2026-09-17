@@ -4,6 +4,8 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Tera Agent</title>
+<link rel="icon" href="favicon.svg" type="image/svg+xml" />
+<link rel="alternate icon" href="favicon.ico" sizes="16x16 32x32 48x48" />
 <style>
   :root{
     --accent:#2563eb; --accent-weak:#3b82f6;
@@ -27,8 +29,9 @@
 
   /* Sidebar */
   .side{background:var(--surface);border-right:1px solid var(--border);display:flex;flex-direction:column;padding:14px 10px}
-  .brand{display:flex;align-items:baseline;gap:8px;padding:8px 8px 16px;font-weight:600;font-size:15px}
-  .brand-logo{height:26px;width:auto;max-width:100%;color:var(--text)}
+  .brand{display:flex;align-items:center;gap:8px;padding:8px 8px 16px;font-weight:600;font-size:15px}
+  .brand-logo{height:24px;width:24px;color:var(--accent);flex:none}
+  .brand-name{font-size:16px;letter-spacing:.04em}
   .brand-sub{color:var(--muted);font-weight:600;font-size:13px;letter-spacing:.02em}
   .brand .logo{width:28px;height:28px;border-radius:8px;background:linear-gradient(135deg,var(--accent),var(--accent-weak));display:grid;place-items:center;color:#fff}
   .nav{display:flex;flex-direction:column;gap:2px;margin-top:6px}
@@ -127,6 +130,7 @@
   .center{display:grid;place-items:center;height:100%}
   .reg{width:420px;max-width:92vw;text-align:center;padding:34px}
   .reg .logo-lg{width:56px;height:56px;border-radius:16px;background:linear-gradient(135deg,var(--accent),var(--accent-weak));display:grid;place-items:center;color:#fff;margin:0 auto 16px}
+  .reg .logo-lg svg{width:30px;height:30px}
   .reg h2{margin:0 0 6px;font-size:20px}
   .muted{color:var(--muted)}
   .mt{margin-top:14px}
@@ -142,18 +146,26 @@
 </style>
 </head>
 <body>
+<!-- Marca de Tera: se define una vez y se reutiliza con <use href="#tera-mark">. -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+  <symbol id="tera-mark" viewBox="0 0 1050 1024" fill="currentColor">
+    <path d="M780.097 960.625c0 40.629-25.245 60.877-75.735 60.877s-74.815-20.249-74.815-60.877v-826.511h-221.551c-30.241 0-46.414-21.432-48.255-64.296 0-42.206 16.041-63.375 48.255-63.375h593.52c32.082 0 47.334 21.169 45.757 63.375 0 42.864-15.252 64.296-45.757 64.296h-221.551v826.511z"/>
+    <path d="M386.038 205.641h138.322v129.775h-138.322v-129.775z"/>
+    <path d="M386.038 429.033h138.453v129.775h-138.453v-129.775z"/>
+    <path d="M386.038 652.425h138.453v129.775h-138.453v-129.775z"/>
+    <path d="M138.453 429.033h138.453v129.775h-138.453v-129.775z"/>
+    <path d="M0 205.641h138.453v129.775h-138.453v-129.775z"/>
+  </symbol>
+</svg>
+
 <div class="app" id="app">
   <!-- Sidebar -->
   <aside class="side">
     <div class="brand">
-      <svg class="brand-logo" viewBox="0 0 128 40" role="img" aria-label="TERA" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
-        <g>
-          <rect x="1" y="19" width="3.5" height="3.5"/><rect x="1" y="25.5" width="2.6" height="2.6"/>
-          <rect x="7.5" y="12.5" width="4.6" height="4.6"/><rect x="7.5" y="19" width="3.6" height="3.6"/><rect x="7.5" y="25.5" width="2.6" height="2.6"/>
-          <rect x="15" y="6" width="6" height="6"/><rect x="15" y="14" width="4.6" height="4.6"/><rect x="15" y="21" width="3.6" height="3.6"/>
-        </g>
-        <text x="26" y="31" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="30" font-weight="800" letter-spacing="1.5">TERA</text>
+      <svg class="brand-logo" viewBox="0 0 1050 1024" role="img" aria-label="Tera">
+        <use href="#tera-mark"/>
       </svg>
+      <span class="brand-name">TERA</span>
       <span class="brand-sub">Agent</span>
     </div>
     <nav class="nav" id="nav">
@@ -276,7 +288,7 @@
 <!-- REGISTRO (overlay) -->
 <div class="center hidden" id="regScreen" style="position:fixed;inset:0;background:var(--bg);z-index:40">
   <div class="card reg">
-    <div class="logo-lg">🖨</div>
+    <div class="logo-lg"><svg viewBox="0 0 1050 1024" role="img" aria-label="Tera"><use href="#tera-mark"/></svg></div>
     <h2>Tera Agent</h2>
     <div class="muted">Estado: No registrado</div>
     <p class="muted mt">Este equipo aún no está vinculado a un servidor Tera ERP.</p>

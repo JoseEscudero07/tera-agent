@@ -4,6 +4,23 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1.0.0/).
 
 ## [Unreleased]
 
+### Changed
+- **El logo de Tera sustituye a los iconos de relleno.** El icono de la bandeja
+  era un cuadrado azul liso de 16x16 y el panel dibujaba un logotipo aproximado
+  con rectángulos y una fuente del sistema. Ahora todo sale de la marca vectorial
+  (`assets/brand/tera-mark.svg`), que es la fuente de verdad:
+  - bandeja del sistema (`cmd/tera-agent/assets/tray.ico`, 16-48 px);
+  - instalador, accesos directos del menú y del escritorio, y la entrada de
+    "Aplicaciones" (`installer/tera-agent.ico`, 16-256 px, más la imagen de la
+    cabecera del asistente). Los accesos al panel apuntan a una URL, así que sin
+    `IconFilename` mostraban el icono del navegador predeterminado;
+  - panel local: la marca real en la barra lateral y en la pantalla de registro,
+    y favicon propio (`favicon.svg`, con `favicon.ico` de respaldo).
+  - `assets/brand/make-icons.sh` regenera todos los ficheros desde el SVG: los
+    `.ico` llevan las entradas pequeñas en BMP y solo la de 256 px en PNG, que es
+    lo que aceptan sin sorpresas `LoadImage` (la bandeja), el compilador de Inno
+    Setup y el Explorador.
+
 ## [1.1.0] - 2026-09-17
 
 Instalador validado en un Windows 11 limpio (`tools/windows-vm`), en la HP

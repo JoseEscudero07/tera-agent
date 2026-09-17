@@ -42,7 +42,12 @@ PrivilegesRequired=admin
 ArchitecturesInstallIn64BitMode=x64compatible
 ArchitecturesAllowed=x64compatible
 WizardStyle=modern
-UninstallDisplayIcon={app}\tera-agent.exe
+; Icono del propio instalador, de los accesos directos y de la entrada en
+; "Aplicaciones". Los .exe no llevan icono incrustado, así que se instala el
+; .ico junto a ellos y se apunta aquí (ver assets/brand/make-icons.sh).
+SetupIconFile=tera-agent.ico
+WizardSmallImageFile=wizard-small.bmp,wizard-small@2x.bmp
+UninstallDisplayIcon={app}\tera-agent.ico
 ; Cierra el tray si está corriendo, para poder reemplazar el .exe sin reiniciar.
 CloseApplications=yes
 RestartApplications=no
@@ -77,6 +82,9 @@ Source: "staging\poppler\COPYING";     DestDir: "{app}\poppler"; Flags: ignoreve
 ; PDF de una página (600 bytes) para que scripts\windows-verify.ps1 y el soporte
 ; puedan ejercitar el pipeline completo PDF→raster→ESC/POS sin gastar papel.
 Source: "staging\testpage.pdf";        DestDir: "{app}"; Flags: ignoreversion
+; Icono de la marca: lo usan los accesos directos, el desinstalador y la
+; entrada de "Aplicaciones". No viene de staging: es fuente del repositorio.
+Source: "tera-agent.ico";              DestDir: "{app}"; Flags: ignoreversion
 
 [Dirs]
 ; Carpeta de datos del SERVICIO: config (con el Token), logs y estado de trabajos.
@@ -90,12 +98,14 @@ Source: "staging\testpage.pdf";        DestDir: "{app}"; Flags: ignoreversion
 Name: "{commonappdata}\TeraAgent"; Check: IsServiceMode
 
 [Icons]
-Name: "{group}\Panel de Tera Agent";        Filename: "{#PanelURL}"
+; IconFilename en los accesos al panel: sin él, Windows les pondría el icono del
+; navegador predeterminado, porque apuntan a una URL y no a un .exe.
+Name: "{group}\Panel de Tera Agent";        Filename: "{#PanelURL}"; IconFilename: "{app}\tera-agent.ico"
 ; La carpeta de datos solo tiene una ruta fija en modo servicio (ProgramData). En
 ; modo usuario vive en el perfil de cada usuario; ábrela desde el panel.
 Name: "{group}\Carpeta de datos y logs";    Filename: "{commonappdata}\TeraAgent"; Check: IsServiceMode
 Name: "{group}\{cm:UninstallProgram,{#AppName}}"; Filename: "{uninstallexe}"
-Name: "{autodesktop}\Panel de Tera Agent";  Filename: "{#PanelURL}"; Tasks: desktopicon
+Name: "{autodesktop}\Panel de Tera Agent";  Filename: "{#PanelURL}"; IconFilename: "{app}\tera-agent.ico"; Tasks: desktopicon
 
 [Registry]
 ; Autoarranque al iniciar sesión (modo "app de usuario"). HKLM y no HKCU: el
