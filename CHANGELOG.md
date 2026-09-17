@@ -30,6 +30,14 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1.0.0/).
     `.ico` llevan las entradas pequeñas en BMP y solo la de 256 px en PNG, que es
     lo que aceptan sin sorpresas `LoadImage` (la bandeja), el compilador de Inno
     Setup y el Explorador.
+- **Los `.exe` llevan icono y datos de versión.** Se compilaban sin recursos de
+  Windows: el Explorador y la barra de tareas les ponían el icono genérico, y el
+  cuadro de UAC al instalar mostraba el nombre del fichero. Ahora
+  `tools/winres` genera el `.syso` (icono completo + `VS_VERSIONINFO` con el
+  nombre, la empresa y la versión del release) y los dos scripts de build lo
+  incrustan; el `.syso` es artefacto de build y se borra al terminar, para que un
+  `go build` a mano no arrastre la versión de otro release.
+  `windows-verify.ps1` comprueba que los binarios instalados los traigan.
 
 ## [1.1.0] - 2026-09-17
 

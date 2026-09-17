@@ -70,6 +70,15 @@ $popplerBin = Join-Path $InstallDir "poppler\bin"
 Check "tera-agent.exe existe" { if (-not (Test-Path $exe)) { "No esta en $exe" } }
 Check "tera-agent-tray.exe existe" { if (-not (Test-Path $tray)) { "No esta en $tray" } }
 
+# Los recursos del .exe (icono y datos de version) los incrusta tools/winres
+# durante el build de release. Si faltan, el binario se compilo a mano: sale con
+# el icono generico y el cuadro de UAC dice solo el nombre del fichero.
+Check "los .exe llevan icono y datos de version" {
+  $sin = @($exe, $tray) | Where-Object { Test-Path $_ } |
+    Where-Object { (Get-Item $_).VersionInfo.ProductName -ne 'Tera Agent' }
+  if ($sin) { "Sin recursos: $(($sin | Split-Path -Leaf) -join ', ') -> compilados fuera de scripts/build-release" }
+}
+
 # El bundle de poppler es la fuente de los fallos mas caros: pdftoppm.exe solo NO
 # funciona, necesita las DLLs de poppler Y el runtime de Visual C++.
 Check "pdftoppm.exe empaquetado" {

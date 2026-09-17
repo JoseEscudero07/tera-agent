@@ -41,11 +41,23 @@ cd "$repo"
 
 step() { printf '\n\033[36m-> %s\033[0m\n' "$*"; }
 
+# El .syso con el icono y los datos de version de los .exe es un artefacto de
+# build: se genera con la version de este release y se borra al salir, para que
+# un `go build` a mano no arrastre la version de otro.
+syso="$repo/cmd/tera-agent/rsrc_windows_amd64.syso"
+cleanup() {
+  rm -f "$syso"
+  if [[ -n "${tmp:-}" ]]; then rm -rf "$tmp"; fi
+}
+trap cleanup EXIT
+
 echo "== Tera Agent $version (build desde Linux) =="
 
 # --- 1. Binarios --------------------------------------------------------------
 mkdir -p "$dist"
 ld="-s -w -X $pkg.AgentVersion=$version"
+step "recursos de Windows (icono y datos de version)"
+go run ./tools/winres -ico installer/tera-agent.ico -version "$version" -out "$syso"
 step "compilando tera-agent.exe (consola)"
 GOOS=windows GOARCH=amd64 go build -trimpath -ldflags "$ld" -o "$dist/tera-agent.exe" ./cmd/tera-agent
 step "compilando tera-agent-tray.exe (sin consola)"
@@ -94,8 +106,7 @@ echo "$POPPLER_SHA256  $zip" | sha256sum -c --quiet - || {
   exit 1
 }
 
-tmp="$(mktemp -d)"
-trap 'rm -rf "$tmp"' EXIT
+tmp="$(mktemp -d)" # lo borra cleanup()
 unzip -q "$zip" -d "$tmp"
 poppler_bin="$(dirname "$(find "$tmp" -name pdftoppm.exe | head -n1)")"
 # COPYING.gpl2 es la licencia de Poppler; share/poppler/COPYING es el aviso de poppler-data.

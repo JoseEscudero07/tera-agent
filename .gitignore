@@ -10,6 +10,10 @@
 # Scratchpad / temporales de desarrollo
 /scratchpad/
 
+# Recursos de Windows (icono + datos de version) de los .exe: los genera
+# tools/winres en cada build de release con la version de ese release.
+/cmd/tera-agent/*.syso
+
 # Staging del instalador: lo regenera scripts/build-release.ps1 en cada build
 # (binarios + bundle de poppler, ~40 MB). El .iss sí se versiona.
 /installer/staging/

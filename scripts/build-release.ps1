@@ -59,15 +59,27 @@ Write-Host "== Tera Agent $Version ==" -ForegroundColor Cyan
 New-Item -ItemType Directory -Force $dist | Out-Null
 $ldflags = "-s -w -X $pkg.AgentVersion=$Version"
 
-Write-Host "-> compilando tera-agent.exe (consola)"
-& go build -trimpath -ldflags $ldflags -o (Join-Path $dist "tera-agent.exe") ./cmd/tera-agent
-if ($LASTEXITCODE -ne 0) { throw "go build (consola) fallo" }
+# El .syso con el icono y los datos de version (los que ve el cuadro de UAC) es
+# un artefacto de build: el enlazador recoge cualquier .syso del directorio del
+# paquete, asi que se genera con ESTA version y se borra al terminar.
+$syso = Join-Path $repo "cmd\tera-agent\rsrc_windows_amd64.syso"
+Write-Host "-> recursos de Windows (icono y datos de version)"
+& go run ./tools/winres -ico installer/tera-agent.ico -version $Version -out $syso
+if ($LASTEXITCODE -ne 0) { throw "winres fallo" }
 
-# -H=windowsgui evita la ventana de consola negra al iniciar sesion. Es el mismo
-# codigo: solo cambia el subsistema declarado en el PE.
-Write-Host "-> compilando tera-agent-tray.exe (sin consola)"
-& go build -trimpath -ldflags "$ldflags -H=windowsgui" -o (Join-Path $dist "tera-agent-tray.exe") ./cmd/tera-agent
-if ($LASTEXITCODE -ne 0) { throw "go build (gui) fallo" }
+try {
+  Write-Host "-> compilando tera-agent.exe (consola)"
+  & go build -trimpath -ldflags $ldflags -o (Join-Path $dist "tera-agent.exe") ./cmd/tera-agent
+  if ($LASTEXITCODE -ne 0) { throw "go build (consola) fallo" }
+
+  # -H=windowsgui evita la ventana de consola negra al iniciar sesion. Es el mismo
+  # codigo: solo cambia el subsistema declarado en el PE.
+  Write-Host "-> compilando tera-agent-tray.exe (sin consola)"
+  & go build -trimpath -ldflags "$ldflags -H=windowsgui" -o (Join-Path $dist "tera-agent-tray.exe") ./cmd/tera-agent
+  if ($LASTEXITCODE -ne 0) { throw "go build (gui) fallo" }
+} finally {
+  Remove-Item $syso -ErrorAction SilentlyContinue
+}
 
 # Comprobacion de humo: que el binario reporte la version inyectada. Si esto
 # falla, el ldflags no cuajo y el auto-update quedaria roto en produccion.

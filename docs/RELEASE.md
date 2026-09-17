@@ -23,6 +23,12 @@ Ese `0.0.0-dev` es deliberado: si un binario llega a producción sin pasar por e
 build de release, se ve inmediatamente en el heartbeat y en el panel. No falla
 en silencio.
 
+Esa misma versión va también en los **recursos de Windows** del `.exe` (el
+nombre y la versión que enseñan las propiedades del fichero y el cuadro de UAC):
+los genera `tools/winres` desde `installer/tera-agent.ico` justo antes de
+compilar, en un `.syso` que el enlazador incrusta y que el build borra al
+terminar. Nunca se versiona: llevaría la versión de otro release.
+
 `scripts/build-release.ps1` valida el formato semver y **verifica que el binario
 reporte la versión inyectada** antes de empaquetar. Si el `-ldflags` no cuaja, el
 build falla ahí y no cuando 200 clientes dejen de actualizarse.
