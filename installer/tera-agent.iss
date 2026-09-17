@@ -79,13 +79,21 @@ Source: "staging\poppler\COPYING";     DestDir: "{app}\poppler"; Flags: ignoreve
 Source: "staging\testpage.pdf";        DestDir: "{app}"; Flags: ignoreversion
 
 [Dirs]
-; Datos de ejecución: config, logs y estado de trabajos. Fuera de Program Files
-; para que el agente pueda escribir sin ser administrador.
-Name: "{commonappdata}\TeraAgent"; Permissions: users-modify
+; Carpeta de datos del SERVICIO: config (con el Token), logs y estado de trabajos.
+; Solo se crea en modo servicio. Antes llevaba "Permissions: users-modify", lo que
+; dejaba que CUALQUIER usuario del equipo leyera el Token y reescribiera la config
+; que el servicio arranca como LocalSystem (escalada de privilegios). Ahora NO se
+; abren permisos aquí: en [Run], "setup-data --scope service" restringe la carpeta
+; a SYSTEM y Administradores (ver adapters/fsacl). En modo usuario la config vive
+; en el perfil del usuario (%LOCALAPPDATA%), protegida por los permisos del perfil,
+; y la crea el propio agente en su primer arranque.
+Name: "{commonappdata}\TeraAgent"; Check: IsServiceMode
 
 [Icons]
 Name: "{group}\Panel de Tera Agent";        Filename: "{#PanelURL}"
-Name: "{group}\Carpeta de datos y logs";    Filename: "{commonappdata}\TeraAgent"
+; La carpeta de datos solo tiene una ruta fija en modo servicio (ProgramData). En
+; modo usuario vive en el perfil de cada usuario; ábrela desde el panel.
+Name: "{group}\Carpeta de datos y logs";    Filename: "{commonappdata}\TeraAgent"; Check: IsServiceMode
 Name: "{group}\{cm:UninstallProgram,{#AppName}}"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\Panel de Tera Agent";  Filename: "{#PanelURL}"; Tasks: desktopicon
 
@@ -93,29 +101,48 @@ Name: "{autodesktop}\Panel de Tera Agent";  Filename: "{#PanelURL}"; Tasks: desk
 ; Autoarranque al iniciar sesión (modo "app de usuario"). HKLM y no HKCU: el
 ; instalador corre elevado, así que HKCU escribiría en el perfil del
 ; administrador y no en el del cajero que usa el POS.
+; --scope user (no una ruta fija): el agente resuelve la config en el perfil del
+; usuario que inicia sesión (%LOCALAPPDATA%\TeraAgent), no en el del administrador
+; que instaló. Cada cuenta tiene su propio registro; nada se comparte entre ellas.
 Root: HKLM; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; \
   ValueType: string; ValueName: "TeraAgent"; \
-  ValueData: """{app}\tera-agent-tray.exe"" run --tray --config ""{commonappdata}\TeraAgent\config.yaml"""; \
+  ValueData: """{app}\tera-agent-tray.exe"" run --tray --scope user"; \
   Flags: uninsdeletevalue; Check: IsUserMode
 
 [Run]
 ; --- Modo servicio ---
-Filename: "{app}\tera-agent.exe"; Parameters: "service install --config ""{commonappdata}\TeraAgent\config.yaml"""; \
+; 1) setup-data crea la carpeta de datos y RESTRINGE sus permisos (SYSTEM +
+;    Administradores) y escribe la config por defecto. Sustituye al antiguo
+;    WriteDefaultConfig en Pascal: al escribirla el propio agente desaparece el
+;    bug de las comillas YAML y la carpeta nunca pasa por permisos abiertos.
+Filename: "{app}\tera-agent.exe"; Parameters: "setup-data --scope service"; \
+  StatusMsg: "Preparando la carpeta de datos (permisos seguros)..."; Flags: runhidden waituntilterminated; Check: IsServiceMode
+; 2) El servicio se instala y arranca con --scope service (ver service_windows.go):
+;    resuelve ProgramData, verifica que sus permisos son seguros y, si no lo son,
+;    se niega a arrancar.
+Filename: "{app}\tera-agent.exe"; Parameters: "service install"; \
   StatusMsg: "Instalando el servicio de Windows..."; Flags: runhidden waituntilterminated; Check: IsServiceMode
 Filename: "{app}\tera-agent.exe"; Parameters: "service start"; \
   StatusMsg: "Arrancando el servicio..."; Flags: runhidden waituntilterminated; Check: IsServiceMode
+; 3) Registro del equipo: en servicio se hace por consola de administrador, no por
+;    el panel (que deja la conexión en solo lectura). Pide URL y Token sin eco.
+Filename: "{app}\tera-agent.exe"; Parameters: "register --scope service"; \
+  Description: "Registrar el equipo ahora (introducir URL y Token del ERP)"; \
+  Flags: postinstall waituntilterminated skipifsilent; Check: IsServiceMode
 
 ; --- Modo app de usuario: arranca ya, sin esperar a reiniciar sesión ---
 ; runasoriginaluser es importante: el instalador corre elevado, y sin este flag
 ; la bandeja arrancaría como administrador — distinto de cómo arrancará al
-; iniciar sesión, y escribiendo en el perfil equivocado.
-Filename: "{app}\tera-agent-tray.exe"; Parameters: "run --tray --config ""{commonappdata}\TeraAgent\config.yaml"""; \
+; iniciar sesión, y escribiendo en el perfil equivocado. --scope user hace que el
+; agente cree/lea la config en el perfil de ESE usuario.
+Filename: "{app}\tera-agent-tray.exe"; Parameters: "run --tray --scope user"; \
   Description: "Iniciar Tera Agent ahora"; Flags: nowait postinstall skipifsilent runasoriginaluser; Check: IsUserMode
 
-; --- Abrir el panel para registrar el Token (ambos modos) ---
-; También como usuario original, para que abra SU navegador y su sesión.
+; --- Abrir el panel para registrar el Token (solo modo usuario) ---
+; También como usuario original, para que abra SU navegador y su sesión. En modo
+; servicio el registro es por consola (paso 3), no por el panel.
 Filename: "{#PanelURL}"; Description: "Abrir el panel para registrar el equipo"; \
-  Flags: postinstall shellexec skipifsilent nowait runasoriginaluser
+  Flags: postinstall shellexec skipifsilent nowait runasoriginaluser; Check: IsUserMode
 
 [UninstallRun]
 ; Parar y borrar el servicio antes de quitar los ficheros. RunOnceId evita que se
@@ -175,65 +202,10 @@ begin
     Result := ModePage.Values[ModeServiceIndex];
 end;
 
-// YamlStr envuelve un valor en comillas SIMPLES de YAML, que lo hacen literal.
-//
-// Esto no es cosmético: con comillas DOBLES, YAML interpreta las secuencias de
-// escape, y una ruta de Windows como "C:\ProgramData\TeraAgent" contiene \P y \T,
-// que no son escapes válidos. El resultado es un YAML inválido, el Agent falla al
-// arrancar con "found unknown escape character" y —al ser un binario sin consola—
-// muere sin mostrar nada: se instala y nunca abre.
-function YamlStr(const S: String): String;
-var
-  T: String;
-begin
-  T := S;
-  // Dentro de comillas simples, una comilla se escapa duplicándola.
-  StringChangeEx(T, '''', '''''', True);
-  Result := '''' + T + '''';
-end;
-
-// Escribe la configuración inicial solo si no existe: una reinstalación o una
-// actualización NO debe pisar el Token ni las impresoras ya calibradas.
-//
-// data_dir se fija explícitamente porque el valor por defecto es
-// os.UserConfigDir(), que apunta a sitios distintos según quién ejecute
-// (LocalSystem -> systemprofile, usuario -> su AppData). Fijarlo garantiza que
-// el estado de trabajos y los logs estén siempre en el mismo lugar.
-procedure WriteDefaultConfig;
-var
-  Path, DataDir: String;
-  Lines: TArrayOfString;
-begin
-  Path := ExpandConstant('{commonappdata}\TeraAgent\config.yaml');
-  if FileExists(Path) then
-    Exit;
-
-  DataDir := ExpandConstant('{commonappdata}\TeraAgent');
-
-  SetArrayLength(Lines, 14);
-  Lines[0]  := '# Tera Agent - configuracion. Registra el equipo desde el panel:';
-  Lines[1]  := '#   ' + '{#PanelURL}';
-  Lines[2]  := 'server:';
-  Lines[3]  := '  url: '''' # wss://tu-erp/ws/agent/ ; vacio = modo local';
-  Lines[4]  := '  token: '''' # lo emite el Backend; se rellena al registrar';
-  Lines[5]  := 'printer:';
-  Lines[6]  := '  default: ''''';
-  Lines[7]  := 'http:';
-  Lines[8]  := '  addr: ' + YamlStr('127.0.0.1:9100');
-  Lines[9]  := '  token: ''''';
-  Lines[10] := 'data_dir: ' + YamlStr(DataDir);
-  Lines[11] := 'log:';
-  Lines[12] := '  level: ' + YamlStr('info');
-  Lines[13] := '  file: ' + YamlStr(DataDir + '\tera-agent.log');
-
-  SaveStringsToUTF8File(Path, Lines, False);
-end;
-
-procedure CurStepChanged(CurStep: TSetupStep);
-begin
-  if CurStep = ssPostInstall then
-    WriteDefaultConfig;
-end;
+// La configuración inicial ya NO se escribe aquí en Pascal, sino con
+// "tera-agent.exe setup-data" (ver [Run]): así el propio agente crea la carpeta
+// con permisos seguros y escribe un YAML válido (el antiguo bug de las comillas
+// dobles en las rutas de Windows desaparece porque lo genera Go, no este script).
 
 // Al desinstalar, dejamos la config y los logs: si el cliente reinstala no tiene
 // que volver a registrar el equipo, y los logs sirven para el soporte posterior.

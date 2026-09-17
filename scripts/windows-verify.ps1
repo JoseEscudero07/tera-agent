@@ -233,7 +233,9 @@ Section "6. Registro"
 # El log en fichero no escribia nada en el binario sin consola: io.MultiWriter
 # abortaba porque os.Stderr es un handle invalido sin consola.
 Check "el agente escribe log en fichero" {
-  $log = Join-Path $DataDir "tera-agent.log"
+  # El log vive en la subcarpeta logs\ (permisos distintos del config: Usuarios
+  # puede leerlo, pero no el config con el Token).
+  $log = Join-Path $DataDir "logs\tera-agent.log"
   if (-not (Test-Path $log)) { return "no existe $log (revisa 'log.file' en config.yaml)" }
   if ((Get-Item $log).Length -eq 0) { return "$log esta a 0 bytes: el agente no esta registrando nada" }
 }
@@ -273,6 +275,88 @@ if ($Printer) {
   }
 } else {
   Skip "impresion fisica" "pasa -Printer 'NOMBRE' para probarla"
+}
+
+# --------------------------------------------------------------- 8. Seguridad
+Section "8. Seguridad de la carpeta de datos"
+
+# El hallazgo que motivo estos checks: la carpeta llevaba "users-modify", asi que
+# cualquier usuario local podia leer el Token y reescribir la config que el
+# servicio arranca como LocalSystem. Solo aplica en modo servicio (en modo usuario
+# la config vive en el perfil, protegida por sus permisos).
+if ($svc) {
+  # SIDs de confianza: SYSTEM, Administradores, CREATOR OWNER. Cualquier OTRO con
+  # permiso de escritura es un fallo. Se trabaja con SIDs, no con nombres, porque
+  # "Usuarios"/"Users" cambia con el idioma de Windows.
+  $trusted = @('S-1-5-18', 'S-1-5-32-544', 'S-1-3-0')
+  $writeMask = [int]([Security.AccessControl.FileSystemRights]'WriteData,AppendData,WriteExtendedAttributes,WriteAttributes,Delete,ChangePermissions,TakeOwnership')
+
+  Check "la carpeta de datos no hereda permisos (DACL protegida)" {
+    $acl = Get-Acl $DataDir
+    if (-not $acl.AreAccessRulesProtected) { "hereda de ProgramData (grupo Usuarios con escritura)" }
+  }
+
+  Check "ningun usuario sin privilegios puede escribir en la carpeta de datos" {
+    $acl = Get-Acl $DataDir
+    $bad = @()
+    foreach ($r in $acl.Access) {
+      if ($r.AccessControlType -ne 'Allow') { continue }
+      if (([int]$r.FileSystemRights -band $writeMask) -eq 0) { continue }
+      $sid = try { $r.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value } catch { "$($r.IdentityReference)" }
+      if ($sid -notin $trusted) { $bad += $sid }
+    }
+    if ($bad) { "con escritura: $($bad -join ', ') (debe ser solo SYSTEM y Administradores)" }
+  }
+
+  Check "el config del servicio no es legible por el grupo Usuarios" {
+    if (-not (Test-Path $cfg)) { return "config ausente" }
+    $acl = Get-Acl $cfg
+    foreach ($r in $acl.Access) {
+      if ($r.AccessControlType -ne 'Allow') { continue }
+      $sid = try { $r.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value } catch { "$($r.IdentityReference)" }
+      if ($sid -eq 'S-1-5-32-545') { return "el grupo Usuarios tiene acceso al config con el Token" }
+    }
+  }
+}
+
+# Vale en ambos modos: un log.file fuera de data_dir es la primitiva de escalada
+# (LocalSystem crea/abre el fichero en la ruta que diga el config).
+Check "log.file esta dentro de data_dir" {
+  if (-not (Test-Path $cfg)) { return "config ausente" }
+  $m = Select-String -Path $cfg -Pattern "^\s*file:\s*'(.+)'"
+  if (-not $m) { return }  # sin log.file: solo stderr, valido
+  $line = $m.Matches[0].Groups[1].Value
+  if (-not $line) { return }
+  $logFull = [IO.Path]::GetFullPath($line)
+  $ddFull = [IO.Path]::GetFullPath($DataDir)
+  if (-not $logFull.StartsWith($ddFull, [StringComparison]::OrdinalIgnoreCase)) {
+    "log.file ($logFull) esta fuera de data_dir ($ddFull)"
+  }
+}
+
+if ($script:status) {
+  Check "el panel rechaza un POST de otro origen (anti-CSRF)" {
+    try {
+      $r = Invoke-WebRequest "$PanelUrl/api/config" -Method Post -Headers @{ Origin = 'https://atacante.example' } `
+        -Body '{}' -ContentType 'application/json' -UseBasicParsing -TimeoutSec 10
+      "el panel acepto un POST con Origin ajeno (status $($r.StatusCode)): una web podria robar el Token"
+    } catch {
+      $code = $_.Exception.Response.StatusCode.value__
+      if ($code -ne 403) { "se esperaba 403, se obtuvo $code" }
+    }
+  }
+
+  if ($svc) {
+    Check "el panel del servicio rechaza el registro (conexion de solo lectura)" {
+      try {
+        $r = Invoke-WebRequest "$PanelUrl/api/register" -Method Post -Headers @{ Origin = $PanelUrl } `
+          -Body '{"token":"x","url":"wss://x/ws/"}' -ContentType 'application/json' -UseBasicParsing -TimeoutSec 10
+        "el panel del servicio acepto un registro (status $($r.StatusCode)); deberia exigir 'tera-agent register'"
+      } catch {
+        # Se espera un error (502/403): en servicio el registro es por consola.
+      }
+    }
+  }
 }
 
 # ------------------------------------------------------------------ Resumen

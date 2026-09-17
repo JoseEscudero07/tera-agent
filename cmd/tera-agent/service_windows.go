@@ -93,6 +93,10 @@ func controlService(action, configPath string) error {
 			s.Close()
 			return fmt.Errorf("service %q already installed", serviceName)
 		}
+		// Arranca con --scope service (no una ruta de config fija): el Agent resuelve
+		// así la carpeta de ProgramData, verifica que sus permisos sean seguros y se
+		// niega a arrancar si no lo son. configPath queda para setup-data/register.
+		_ = configPath
 		s, err := m.CreateService(serviceName, exe, mgr.Config{
 			DisplayName: serviceDisplay,
 			Description: serviceDesc,
@@ -101,7 +105,7 @@ func controlService(action, configPath string) error {
 			// evita descubrir cero impresoras en el primer ciclo.
 			DelayedAutoStart: true,
 			Dependencies:     []string{spoolerService},
-		}, "run", "--config", configPath)
+		}, "run", "--scope", "service")
 		if err != nil {
 			return err
 		}

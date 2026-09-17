@@ -135,6 +135,14 @@ func Build(configPath string) (*App, error) {
 		cfg = ports.Config{LogLevel: "info"}
 	}
 
+	// data_dir se resuelve antes del logger: el fichero de log debe quedar dentro
+	// de esta carpeta (protegida por ACL en Windows). Validarlo aquí impide que un
+	// log.file manipulado haga que el servicio (LocalSystem) escriba fuera.
+	dd := dataDir(cfg)
+	if err := config.LogFileWithin(cfg.LogFile, dd); err != nil {
+		return nil, err
+	}
+
 	log, err := logger.NewWithFile(cfg.LogLevel, cfg.LogFile, cfg.LogMaxSizeMB, cfg.LogMaxBackups)
 	if err != nil {
 		return nil, err
@@ -143,7 +151,6 @@ func Build(configPath string) (*App, error) {
 	info := agent.NewInfo()
 	isLocal := cfg.BackendURL == ""
 
-	dd := dataDir(cfg)
 	jobStore, err := store.New(filepath.Join(dd, "jobs.json"))
 	if err != nil {
 		return nil, err

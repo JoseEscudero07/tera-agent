@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/fs"
+	"net"
 	"net/http"
 	"net/url"
 	"os/exec"
@@ -53,11 +54,21 @@ type Deps struct {
 	// arranque lo decide el instalador, no la configuración, así que un
 	// interruptor aquí solo podría mentir.
 	RunMode string
+	// ConnReadOnly deja los datos de conexión (URL y Token) como de solo lectura
+	// en el panel. Se activa en modo servicio: la configuración vive en una carpeta
+	// que solo los administradores pueden tocar, y permitir cambiarla desde un panel
+	// que cualquier usuario del equipo puede abrir sería una vía para saltarse esa
+	// protección (reescribir el Token, apuntar el Agent a otro servidor). El
+	// registro en servicio se hace con `tera-agent register` como administrador.
+	ConnReadOnly bool
 }
 
 // Server is the UI HTTP server.
 type Server struct {
 	d Deps
+	// port es el puerto en el que escucha el panel, para validar las cabeceras
+	// Host y Origin contra CSRF. Se fija en Run a partir de la dirección real.
+	port string
 }
 
 // New builds the UI server.
@@ -82,7 +93,11 @@ func (s *Server) Run(ctx context.Context, addr string) error {
 	mux.HandleFunc("/api/open-data", s.openData)
 	mux.HandleFunc("/ws/ui", s.ws)
 
-	srv := &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: 10 * time.Second}
+	// El puerto real alimenta las comprobaciones anti-CSRF (Host/Origin).
+	if _, p, err := net.SplitHostPort(addr); err == nil {
+		s.port = p
+	}
+	srv := &http.Server{Addr: addr, Handler: s.guard(mux), ReadHeaderTimeout: 10 * time.Second}
 	go func() {
 		<-ctx.Done()
 		c, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -102,8 +117,9 @@ func (s *Server) status(w http.ResponseWriter, _ *http.Request) {
 	// un config con token viejo pero sin URL (o vice versa) muestra la pantalla
 	// de registro en lugar de un panel vacío.
 	writeJSON(w, map[string]any{
-		"registered": s.d.Cfg.Token != "" && s.d.Cfg.BackendURL != "",
-		"state":      string(s.d.Machine.Current()),
+		"registered":   s.d.Cfg.Token != "" && s.d.Cfg.BackendURL != "",
+		"connReadOnly": s.d.ConnReadOnly,
+		"state":        string(s.d.Machine.Current()),
 		"empresa":    id.Empresa,
 		"sede":       id.Sucursal,
 		"equipo":     firstNonEmpty(id.Equipo, s.d.Cfg.AgentID),
@@ -516,6 +532,7 @@ func (s *Server) config(w http.ResponseWriter, r *http.Request) {
 			"log":           s.d.Cfg.LogLevel,
 			"dataDir":       s.d.DataDir,
 			"runMode":       s.d.RunMode,
+			"connReadOnly":  s.d.ConnReadOnly,
 			"cutFeedDots":   s.d.Cfg.CutFeedDots,
 			"topMarginDots": s.d.Cfg.TopMarginDots,
 			"pageMarginMM":  s.d.Cfg.PageMarginMM,
@@ -540,6 +557,24 @@ func (s *Server) config(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeErr(w, "petición inválida: "+err.Error())
 		return
+	}
+
+	// En modo servicio los datos de conexión son de solo lectura. El panel manda
+	// siempre la URL actual (aunque no se edite), así que solo se rechaza un cambio
+	// REAL: un Token nuevo o una URL distinta. Un no-op deja pasar el guardado del
+	// resto (calibración, nivel de log). Neutralizamos url/token para que la lógica
+	// de abajo no dispare una reconexión.
+	if s.d.ConnReadOnly {
+		if body.Token != nil && strings.TrimSpace(*body.Token) != "" {
+			writeErr(w, "en modo servicio el Token es de solo lectura; regístralo con 'tera-agent register' como administrador")
+			return
+		}
+		if body.URL != nil && strings.TrimSpace(*body.URL) != s.d.Cfg.BackendURL {
+			writeErr(w, "en modo servicio la URL del servidor es de solo lectura; cámbiala con 'tera-agent register' como administrador")
+			return
+		}
+		body.Token = nil
+		body.URL = nil
 	}
 
 	// Un cambio de conexión (URL o Token) invalida la sesión actual con el
@@ -618,6 +653,10 @@ func (s *Server) unregister(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, "usa POST")
 		return
 	}
+	if s.d.ConnReadOnly {
+		writeErr(w, "en modo servicio usa 'tera-agent register' como administrador para cambiar la vinculación")
+		return
+	}
 	s.d.Cfg.Token = ""
 	s.d.Cfg.BackendURL = ""
 	if s.d.SaveConfig != nil {
@@ -683,6 +722,10 @@ func clamp(v, lo, hi int) int {
 }
 
 func (s *Server) register(w http.ResponseWriter, r *http.Request) {
+	if s.d.ConnReadOnly {
+		writeErr(w, "en modo servicio el registro se hace con 'tera-agent register' como administrador")
+		return
+	}
 	var body struct {
 		Token string `json:"token"`
 		URL   string `json:"url"`
@@ -736,10 +779,9 @@ func (s *Server) openData(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, map[string]any{"ok": true})
 }
 
-var upgrader = gws.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}
-
 // ws pushes state changes to the UI (poll-based to avoid observer leaks).
 func (s *Server) ws(w http.ResponseWriter, r *http.Request) {
+	upgrader := gws.Upgrader{CheckOrigin: s.checkWSOrigin}
 	c, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		return

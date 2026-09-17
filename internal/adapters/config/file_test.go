@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -174,5 +175,71 @@ func TestPrinterTuning_PerPrinterOverridesGlobal(t *testing.T) {
 	// Unknown printer inherits globals.
 	if feed, top := cfg.PrinterTuning("Otra"); feed != 232 || top != 16 {
 		t.Errorf("unknown printer tuning = (%d,%d), want (232,16)", feed, top)
+	}
+}
+
+// LogFileWithin es la barrera que impide que un log.file manipulado saque la
+// escritura del servicio (LocalSystem) fuera de la carpeta de datos protegida.
+func TestLogFileWithin(t *testing.T) {
+	dir := t.TempDir()
+	sub := filepath.Join(dir, "logs")
+
+	ok := []string{
+		"", // sin fichero: solo stderr
+		filepath.Join(dir, "tera-agent.log"),
+		filepath.Join(sub, "tera-agent.log"),
+	}
+	for _, lf := range ok {
+		if err := LogFileWithin(lf, dir); err != nil {
+			t.Errorf("LogFileWithin(%q, %q) = %v; se esperaba válida", lf, dir, err)
+		}
+	}
+
+	bad := []string{
+		filepath.Join(filepath.Dir(dir), "fuera.log"),        // hermano de data_dir
+		filepath.Join(dir, "..", "escape.log"),               // sube por encima
+		"relativo.log",                                        // no absoluta
+	}
+	for _, lf := range bad {
+		if err := LogFileWithin(lf, dir); err == nil {
+			t.Errorf("LogFileWithin(%q, %q) = nil; se esperaba error", lf, dir)
+		}
+	}
+}
+
+// EnsureDefault crea la config inicial una sola vez, con log.file dentro de
+// data_dir, y no la pisa en llamadas posteriores (actualización / rearranque).
+func TestEnsureDefault(t *testing.T) {
+	dir := t.TempDir()
+	dataDir := filepath.Join(dir, "TeraAgent")
+	path := filepath.Join(dataDir, "config.yaml")
+
+	created, err := EnsureDefault(path, dataDir)
+	if err != nil || !created {
+		t.Fatalf("EnsureDefault inicial: created=%v err=%v", created, err)
+	}
+	// El log por defecto debe quedar dentro de data_dir (barrera de seguridad).
+	cfg, err := New(path).Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := LogFileWithin(cfg.LogFile, dataDir); err != nil {
+		t.Errorf("el log por defecto debe estar dentro de data_dir: %v", err)
+	}
+	if cfg.DataDir != dataDir {
+		t.Errorf("data_dir = %q; se esperaba %q", cfg.DataDir, dataDir)
+	}
+
+	// Marca el fichero y comprueba que una segunda llamada NO lo pisa.
+	if err := os.WriteFile(path, []byte("server:\n  token: 'YA-REGISTRADO'\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	created, err = EnsureDefault(path, dataDir)
+	if err != nil || created {
+		t.Fatalf("segunda EnsureDefault: created=%v err=%v (no debía recrear)", created, err)
+	}
+	b, _ := os.ReadFile(path)
+	if !strings.Contains(string(b), "YA-REGISTRADO") {
+		t.Error("EnsureDefault pisó una config existente")
 	}
 }

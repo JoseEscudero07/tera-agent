@@ -132,24 +132,53 @@ Durante el asistente se elige el **modo de ejecución**. Son excluyentes a
 propósito: el WebSocket contra el ERP debe tener un único dueño en el equipo, o
 el ERP recibiría cada impresión duplicada.
 
-| Modo | Cuándo arranca | Bandeja y panel | Para qué |
-|---|---|---|---|
-| **App de usuario** (por defecto) | al iniciar sesión en Windows | sí | punto de venta atendido |
-| **Servicio de Windows** | con el equipo, sin que nadie inicie sesión | no (los servicios no pueden mostrar bandeja) | equipos desatendidos |
+| Modo | Cuándo arranca | Bandeja y panel | Dónde vive la config | Cómo se registra |
+|---|---|---|---|---|
+| **App de usuario** (por defecto) | al iniciar sesión en Windows | sí | perfil del usuario (`%LOCALAPPDATA%\TeraAgent`) | desde el panel |
+| **Servicio de Windows** | con el equipo, sin que nadie inicie sesión | panel sí, bandeja no | equipo (`C:\ProgramData\TeraAgent`) | por consola de administrador |
 
-Tras la instalación se abre el panel en <http://127.0.0.1:9180> para **registrar
-el equipo con el Token** del ERP. El panel queda accesible siempre: desde el
-icono de la bandeja (*Abrir panel*) o desde el acceso directo del menú Inicio.
+**Dónde vive la configuración y por qué.** La configuración contiene el **Token**
+del Backend, y quien pueda modificarla puede desviar el Token a otro servidor. Por
+eso cada modo la guarda donde solo el dueño legítimo puede tocarla:
 
-Qué deja en el equipo:
+- **App de usuario:** en el perfil del usuario (`%LOCALAPPDATA%\TeraAgent`). Cada
+  cuenta de Windows tiene su propio registro; los permisos del perfil impiden que
+  otra cuenta lo lea. No se usa Roaming a propósito: un perfil móvil copiaría el
+  Token a otros equipos y se duplicarían las impresiones.
+- **Servicio:** en `C:\ProgramData\TeraAgent`, restringida a **SYSTEM y
+  Administradores** (el instalador la aplica con `setup-data`). Un usuario sin
+  privilegios no puede leer el Token ni cambiar la configuración que el servicio
+  arranca como LocalSystem.
+
+**Registro del equipo con el Token:**
+
+- *App de usuario:* tras instalar se abre el panel en <http://127.0.0.1:9180> para
+  pegar la URL y el Token. Accesible siempre desde la bandeja (*Abrir panel*).
+- *Servicio:* el panel deja los datos de conexión en **solo lectura** (cualquiera
+  puede abrir el panel, así que registrar desde ahí saltaría la protección de la
+  carpeta). El registro se hace en una **consola de administrador** —el instalador
+  ofrece hacerlo al terminar— o después:
+
+  ```powershell
+  "C:\Program Files\TeraAgent\tera-agent.exe" register --scope service
+  # pide URL y Token sin mostrarlo; o, para despliegue masivo:
+  tera-agent register --scope service --url wss://erp/ws/agent/ --token-file C:\ruta\token.txt
+  ```
+
+  El Token nunca se pasa como argumento (quedaría en el historial y en la lista de
+  procesos): se teclea sin eco o se lee de un fichero.
+
+Qué deja en el equipo (modo servicio):
 
 ```
-C:\Program Files\TeraAgent\tera-agent.exe        servicio, CLI y diagnóstico
-C:\Program Files\TeraAgent\tera-agent-tray.exe   mismo programa sin consola (bandeja)
-C:\Program Files\TeraAgent\poppler\bin\          pdftoppm.exe + sus DLLs
-C:\ProgramData\TeraAgent\config.yaml             configuración y Token
-C:\ProgramData\TeraAgent\tera-agent.log          log rotativo
+C:\Program Files\TeraAgent\tera-agent.exe          servicio, CLI y diagnóstico
+C:\Program Files\TeraAgent\tera-agent-tray.exe     mismo programa sin consola (bandeja)
+C:\Program Files\TeraAgent\poppler\bin\            pdftoppm.exe + sus DLLs
+C:\ProgramData\TeraAgent\config.yaml               configuración y Token (SYSTEM + Admins)
+C:\ProgramData\TeraAgent\logs\tera-agent.log       log rotativo (Usuarios: solo lectura)
 ```
+
+En modo usuario, la configuración y los logs van a `%LOCALAPPDATA%\TeraAgent\`.
 
 Se desinstala como cualquier programa: **Configuración → Aplicaciones → Tera
 Agent**. La configuración y los logs se conservan, para que una reinstalación no
@@ -230,15 +259,29 @@ O directamente sobre el instalador:
 TeraAgent-Setup-1.0.0.exe /VERYSILENT /SUPPRESSMSGBOXES /MODE=service
 ```
 
+En modo servicio silencioso el equipo queda instalado pero **sin registrar** (el
+paso de registro es interactivo). Regístralo después con `tera-agent register
+--scope service --url … --token-file …` (por GPO/RMM, con el token en un fichero
+temporal que se borra tras usarlo).
+
 ### Gestión manual del servicio
 
 ```powershell
-tera-agent.exe service install|uninstall|start|stop --config <ruta>
+# Preparar la carpeta de datos con permisos seguros y la config por defecto:
+tera-agent.exe setup-data --scope service         # (como administrador)
+# Instalar / arrancar / parar el servicio (arranca con --scope service):
+tera-agent.exe service install|uninstall|start|stop
+# Registrar el equipo (URL + Token) — como administrador:
+tera-agent.exe register --scope service
 ```
 
 El servicio se crea con **arranque automático retrasado**, dependencia del
 **spooler de impresión** y **reintentos automáticos** (5s, 15s, luego cada
 minuto), para que un POS vuelva a imprimir solo sin que nadie reinicie el equipo.
+Al arrancar, **verifica que su carpeta de datos sea segura** (solo SYSTEM y
+Administradores con escritura) y se niega a arrancar si no lo es: la señal de que
+la instalación no aplicó los permisos. Reejecuta `setup-data --scope service`
+como administrador para repararlos.
 
 ## 8. Solución de problemas
 
